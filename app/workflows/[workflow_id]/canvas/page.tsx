@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -131,6 +131,51 @@ function areTypesCompatible(sourceType: string, targetType: string): boolean {
   return sourceType === targetType;
 }
 
+type NodeOutputValues = Record<string, Record<string, unknown>>;
+
+type NodeValueContextValue = {
+  values: NodeOutputValues;
+  setNodeHandleValue: (nodeId: string, handleId: string, value: unknown) => void;
+};
+
+type WorkflowRunContextValue = {
+  runningNodeIds: Set<string>;
+  runWorkflow: () => Promise<void>;
+  workflowRunning: boolean;
+};
+
+const NodeValueContext = createContext<NodeValueContextValue | null>(null);
+const WorkflowRunContext = createContext<WorkflowRunContextValue | null>(null);
+
+function useNodeValueContext() {
+  const context = useContext(NodeValueContext);
+  if (!context) throw new Error("useNodeValueContext must be used inside NodeValueContext.Provider");
+  return context;
+}
+
+function useWorkflowRunContext() {
+  const context = useContext(WorkflowRunContext);
+  if (!context) throw new Error("useWorkflowRunContext must be used inside WorkflowRunContext.Provider");
+  return context;
+}
+
+function useConnectedInputValue(nodeId: string, handleId: string) {
+  const edges = useEdges();
+  const { values } = useNodeValueContext();
+  const edge = edges.find((item) => item.target === nodeId && item.targetHandle === handleId);
+  if (!edge) return { isConnected: false, value: undefined as unknown };
+  const sourceHandle = edge.sourceHandle ?? "result";
+  const sourceValues = values[edge.source] ?? {};
+  return { isConnected: true, value: sourceValues[sourceHandle] };
+}
+
+function displayConnectedValue(value: unknown) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value);
+}
+
 function wouldCreateCycle(edges: Edge[], source: string, target: string): boolean {
   const adj: Record<string, string[]> = {};
   for (const e of edges) {
@@ -155,20 +200,148 @@ const initialNodes: Node[] = [
   {
     id: "request-inputs",
     type: "request",
-    position: { x: 96, y: 96 },
+    position: { x: 70, y: 210 },
     deletable: false,
-    data: {},
+    data: {
+      fields: [
+        {
+          type: "text_field",
+          id: "text_field",
+          label: "text_field",
+          value: "Product: Wireless Bluetooth Headphones. Features: Noise cancellation, 30-hour battery, foldable design.",
+        },
+        { type: "image_field", id: "image_field", label: "image_field" },
+      ],
+    },
+  },
+  {
+    id: "crop-1",
+    type: "cropImage",
+    position: { x: 520, y: 520 },
+    data: { x: "20", y: "20", width: "60", height: "60" },
+  },
+  {
+    id: "crop-2",
+    type: "cropImage",
+    position: { x: 520, y: 850 },
+    data: { x: "0", y: "0", width: "100", height: "50" },
+  },
+  {
+    id: "gemini-1",
+    type: "geminiPreview",
+    position: { x: 520, y: 60 },
+    data: {
+      systemPrompt: "You are a marketing copywriter. Write a one-paragraph product description.",
+    },
+  },
+  {
+    id: "gemini-2",
+    type: "geminiPreview",
+    position: { x: 1010, y: 90 },
+    data: {
+      systemPrompt: "Condense the following product description into a tweet-length hook (under 240 characters)."
+    },
+  },
+  {
+    id: "gemini-final",
+    type: "geminiPreview",
+    position: { x: 1480, y: 250 },
+    data: {
+      systemPrompt: "You are a social media manager. Combine the tweet hook and the two product crops into a final marketing post."
+    },
   },
   {
     id: "response",
     type: "response",
-    position: { x: 960, y: 96 },
+    position: { x: 1980, y: 330 },
     deletable: false,
     data: {},
   },
 ];
 
-const initialEdges: Edge[] = [];
+const initialEdges: Edge[] = [
+  {
+    id: "e-request-text-gemini-1-prompt",
+    source: "request-inputs",
+    sourceHandle: "text_field",
+    target: "gemini-1",
+    targetHandle: "prompt",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.text, strokeWidth: 2 },
+  },
+  {
+    id: "e-request-image-crop-1",
+    source: "request-inputs",
+    sourceHandle: "image_field",
+    target: "crop-1",
+    targetHandle: "input-image",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
+  },
+  {
+    id: "e-request-image-crop-2",
+    source: "request-inputs",
+    sourceHandle: "image_field",
+    target: "crop-2",
+    targetHandle: "input-image",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
+  },
+  {
+    id: "e-gemini-1-gemini-2",
+    source: "gemini-1",
+    sourceHandle: "response",
+    target: "gemini-2",
+    targetHandle: "prompt",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.text, strokeWidth: 2 },
+  },
+  {
+    id: "e-gemini-2-final",
+    source: "gemini-2",
+    sourceHandle: "response",
+    target: "gemini-final",
+    targetHandle: "prompt",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.text, strokeWidth: 2 },
+  },
+  {
+    id: "e-crop-1-final-image",
+    source: "crop-1",
+    sourceHandle: "output-image",
+    target: "gemini-final",
+    targetHandle: "image",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
+  },
+  {
+    id: "e-crop-2-final-image",
+    source: "crop-2",
+    sourceHandle: "output-image",
+    target: "gemini-final",
+    targetHandle: "image",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
+  },
+  {
+    id: "e-final-response",
+    source: "gemini-final",
+    sourceHandle: "response",
+    target: "response",
+    targetHandle: "result",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.text, strokeWidth: 2 },
+  },
+  {
+    id: "e-crop-2-response",
+    source: "crop-2",
+    sourceHandle: "output-image",
+    target: "response",
+    targetHandle: "result",
+    animated: false,
+    style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
+  },
+];
 
 function FieldHandle({
   id,
@@ -455,10 +628,10 @@ function InfoTooltip({
   );
 }
 
-function ResetSettingButton() {
+function ResetSettingButton({ disabled = false }: { disabled?: boolean }) {
   return (
     <HoverTooltip text="Reset" side="top" triggerClassName="inline-flex shrink-0">
-      <button aria-label="Reset" className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:opacity-50">
+      <button type="button" aria-label="Reset" disabled={disabled} className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-50">
         <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
       </button>
     </HoverTooltip>
@@ -1236,8 +1409,8 @@ function LiveNodeHeader({
   );
 }
 
-function LiveNodeShell({ children }: { children: ReactNode }) {
-  return <div className="py-node-shell w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">{children}</div>;
+function LiveNodeShell({ children, running = false }: { children: ReactNode; running?: boolean }) {
+  return <div className={`py-node-shell w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300 ${running ? "node-running" : ""}`}>{children}</div>;
 }
 
 const FIELD_TOOLTIPS: Record<string, string> = {
@@ -1310,7 +1483,14 @@ function uploadAcceptForFieldType(type: string): string {
   return "image/*";
 }
 
-function RequestTextField({ id, label, value }: { id: string; label: string; value: string }) {
+function RequestTextField({ nodeId, id, label, value }: { nodeId: string; id: string; label: string; value: string }) {
+  const [textValue, setTextValue] = useState(value);
+  const { setNodeHandleValue } = useNodeValueContext();
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, id, textValue);
+  }, [id, nodeId, setNodeHandleValue, textValue]);
+
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
@@ -1318,11 +1498,11 @@ function RequestTextField({ id, label, value }: { id: string; label: string; val
         <div className="w-full min-w-0">
           <div className="relative">
             <textarea
-              readOnly
-              value={value}
+              value={textValue}
+              onChange={(event) => setTextValue(event.target.value)}
               rows={3}
               placeholder="Enter text..."
-              className="nodrag nowheel w-full min-w-0 resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
+              className="nodrag nopan nowheel w-full min-w-0 resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
             />
             <button type="button" title="Expand" className="nodrag absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-gray-200/80 text-gray-500 transition-colors hover:bg-gray-300 hover:text-gray-700">
               <Maximize2 size={12} strokeWidth={2} className="h-3 w-3" />
@@ -1335,7 +1515,14 @@ function RequestTextField({ id, label, value }: { id: string; label: string; val
   );
 }
 
-function RequestNumberField({ id, label }: { id: string; label: string }) {
+function RequestNumberField({ nodeId, id, label }: { nodeId: string; id: string; label: string }) {
+  const [value, setValue] = useState("0");
+  const { setNodeHandleValue } = useNodeValueContext();
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, id, Number(value));
+  }, [id, nodeId, setNodeHandleValue, value]);
+
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
@@ -1344,7 +1531,8 @@ function RequestNumberField({ id, label }: { id: string; label: string }) {
           <input
             type="number"
             step="any"
-            defaultValue={0}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
             className="nodrag w-full min-w-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
           />
         </div>
@@ -1354,15 +1542,22 @@ function RequestNumberField({ id, label }: { id: string; label: string }) {
   );
 }
 
-function RequestBooleanField({ id, label }: { id: string; label: string }) {
+function RequestBooleanField({ nodeId, id, label }: { nodeId: string; id: string; label: string }) {
+  const [checked, setChecked] = useState(false);
+  const { setNodeHandleValue } = useNodeValueContext();
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, id, checked);
+  }, [checked, id, nodeId, setNodeHandleValue]);
+
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
         <RequestFieldHeader label={label} />
         <div className="w-full min-w-0">
           <label className="nodrag flex cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-workflow-accent-500 focus:ring-workflow-accent-500 disabled:opacity-50" />
-            <span className="text-sm text-gray-700">False</span>
+            <input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-workflow-accent-500 focus:ring-workflow-accent-500 disabled:opacity-50" />
+            <span className="text-sm text-gray-700">{checked ? "True" : "False"}</span>
           </label>
         </div>
       </div>
@@ -1371,17 +1566,23 @@ function RequestBooleanField({ id, label }: { id: string; label: string }) {
   );
 }
 
-function RequestUploadField({ id, label, type }: { id: string; label: string; type: string }) {
+function RequestUploadField({ nodeId, id, label, type }: { nodeId: string; id: string; label: string; type: string }) {
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const uploadLabel = uploadLabelForFieldType(type)!;
   const accept = uploadAcceptForFieldType(type);
+  const { setNodeHandleValue } = useNodeValueContext();
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, id, uploadedUrl ?? "");
+  }, [id, nodeId, setNodeHandleValue, uploadedUrl]);
 
   const handleUpload = useCallback((file: File) => {
-    const url = URL.createObjectURL(file);
-    setUploadedUrl(url);
+    const reader = new FileReader();
+    reader.onload = () => setUploadedUrl(typeof reader.result === "string" ? reader.result : null);
+    reader.readAsDataURL(file);
   }, []);
 
   return (
@@ -1399,7 +1600,6 @@ function RequestUploadField({ id, label, type }: { id: string; label: string; ty
                       <button
                         type="button"
                         onClick={() => {
-                          URL.revokeObjectURL(uploadedUrl);
                           setUploadedUrl(null);
                         }}
                         className="nodrag absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
@@ -1500,11 +1700,14 @@ function FieldTypeMenu({ onSelect }: { onSelect: (type: string) => void }) {
   );
 }
 
-function RequestInputsNode() {
-  const [fields, setFields] = useState([
-    { type: "text_field", id: "text_field", label: "text_field" },
-    { type: "image_field", id: "image_field", label: "image_field" },
-  ]);
+function RequestInputsNode({ id: nodeId, data }: { id: string; data?: Record<string, unknown> }) {
+  const initialFields = Array.isArray(data?.fields)
+    ? data.fields as Array<{ type: string; id: string; label: string; value?: string }>
+    : [
+        { type: "text_field", id: "text_field", label: "text_field", value: "" },
+        { type: "image_field", id: "image_field", label: "image_field" },
+      ];
+  const [fields, setFields] = useState(initialFields);
 
   const addField = useCallback((type: string) => {
     setFields((prev) => {
@@ -1538,12 +1741,12 @@ function RequestInputsNode() {
       <div className="relative w-full px-4 py-4" style={{ overflow: "visible", minWidth: 380 }}>
         <div className="w-full space-y-4">
           {fields.map((f) => {
-            if (f.type === "number_field") return <RequestNumberField key={f.id} id={f.id} label={f.label} />;
-            if (f.type === "boolean_field") return <RequestBooleanField key={f.id} id={f.id} label={f.label} />;
+            if (f.type === "number_field") return <RequestNumberField key={f.id} nodeId={nodeId} id={f.id} label={f.label} />;
+            if (f.type === "boolean_field") return <RequestBooleanField key={f.id} nodeId={nodeId} id={f.id} label={f.label} />;
             if (f.type === "image_field" || f.type === "audio_field" || f.type === "video_field" || f.type === "media_field" || f.type === "file_field") {
-              return <RequestUploadField key={f.id} id={f.id} label={f.label} type={f.type} />;
+              return <RequestUploadField key={f.id} nodeId={nodeId} id={f.id} label={f.label} type={f.type} />;
             }
-            return <RequestTextField key={f.id} id={f.id} label={f.label} value="" />;
+            return <RequestTextField key={f.id} nodeId={nodeId} id={f.id} label={f.label} value={f.value ?? ""} />;
           })}
         </div>
       </div>
@@ -1551,7 +1754,10 @@ function RequestInputsNode() {
   );
 }
 
-function ResponseOutputCard({ label }: { label: string }) {
+function ResponseOutputCard({ label, value }: { label: string; value: unknown }) {
+  const textValue = displayConnectedValue(value);
+  const isImage = typeof textValue === "string" && (textValue.startsWith("data:image/") || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(textValue));
+
   return (
     <div className="space-y-2 rounded-lg bg-[#F5F5F5] p-3">
       <div className="flex items-center gap-1.5">
@@ -1563,8 +1769,16 @@ function ResponseOutputCard({ label }: { label: string }) {
           <Trash2 size={14} strokeWidth={2} className="h-3.5 w-3.5" />
         </button>
       </div>
-      <div className="flex h-10 items-center justify-center rounded border border-gray-200 bg-white">
-        <span className="text-xs leading-4 text-gray-400">No output yet</span>
+      <div className="min-h-10 rounded border border-gray-200 bg-white p-2">
+        {textValue ? (
+          isImage ? (
+            <img src={textValue} alt={label} className="max-h-32 w-full rounded object-contain" />
+          ) : (
+            <div className="max-h-40 overflow-auto whitespace-pre-wrap text-xs leading-5 text-gray-700">{textValue}</div>
+          )
+        ) : (
+          <div className="flex h-6 items-center justify-center text-xs leading-4 text-gray-400">No output yet</div>
+        )}
       </div>
     </div>
   );
@@ -1572,10 +1786,18 @@ function ResponseOutputCard({ label }: { label: string }) {
 
 function ResponseNode() {
   const edges = useEdges();
+  const { values } = useNodeValueContext();
   const allEdges = edges.filter((e) => e.target === "response" && e.targetHandle === "result");
   const cards = allEdges.length > 0
-    ? allEdges.map((e) => ({ key: e.id, label: e.sourceHandle ?? e.source }))
-    : [{ key: "default", label: "final_result" }];
+    ? allEdges.map((e) => {
+        const handle = e.sourceHandle ?? "result";
+        return {
+          key: e.id,
+          label: handle,
+          value: values[e.source]?.[handle] ?? values[e.source]?.response ?? values[e.source]?.outputImageUrl,
+        };
+      })
+    : [{ key: "default", label: "final_result", value: undefined }];
 
   return (
     <div className="py-node-shell w-[380px] rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">
@@ -1594,7 +1816,7 @@ function ResponseNode() {
         <div className="border-t border-gray-100" />
         <div className="space-y-3">
           {cards.map((card) => (
-            <ResponseOutputCard key={card.key} label={card.label} />
+            <ResponseOutputCard key={card.key} label={card.label} value={card.value} />
           ))}
         </div>
       </div>
@@ -1602,12 +1824,17 @@ function ResponseNode() {
   );
 }
 
-function CropImageNode() {
+function connectedManualInputClass(isConnected: boolean) {
+  return isConnected ? "opacity-55 grayscale cursor-not-allowed" : "";
+}
+
+function CropImageNode({ id, data }: { id: string; data?: Record<string, unknown> }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { runningNodeIds } = useWorkflowRunContext();
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
 
   return (
-    <LiveNodeShell>
+    <LiveNodeShell running={runningNodeIds.has(id)}>
       <LiveNodeHeader
         title="Crop Image"
         tooltip="Crop an image by percentage coordinates."
@@ -1618,11 +1845,11 @@ function CropImageNode() {
       <NodeMenu open={menuOpen} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />
       <div className="px-4 py-4">
         <div className="space-y-4">
-          <CropImageUpload id="input-image" label="Input Image" required />
-          <CropImageNumber id="x-position" label="X Position (%)" defaultValue="0" />
-          <CropImageNumber id="y-position" label="Y Position (%)" defaultValue="0" />
-          <CropImageNumber id="width" label="Width (%)" defaultValue="100" />
-          <CropImageNumber id="height" label="Height (%)" defaultValue="100" />
+          <CropImageUpload nodeId={id} id="input-image" label="Input Image" required />
+          <CropImageNumber nodeId={id} id="x-position" label="X Position (%)" defaultValue={String(data?.x ?? "0")} />
+          <CropImageNumber nodeId={id} id="y-position" label="Y Position (%)" defaultValue={String(data?.y ?? "0")} />
+          <CropImageNumber nodeId={id} id="width" label="Width (%)" defaultValue={String(data?.width ?? "100")} />
+          <CropImageNumber nodeId={id} id="height" label="Height (%)" defaultValue={String(data?.height ?? "100")} />
         </div>
 
         <div className="mt-4 border-t border-gray-100 pt-4">
@@ -1871,7 +2098,10 @@ function StickyNoteToolbar({
   );
 }
 
-function CropImageUpload({ id, label, required }: { id: string; label: string; required?: boolean }) {
+function CropImageUpload({ nodeId, id, label, required }: { nodeId: string; id: string; label: string; required?: boolean }) {
+  const connected = useConnectedInputValue(nodeId, id);
+  const isConnected = connected.isConnected;
+
   return (
     <div className="relative">
       <FieldHandle id={id} color="#3b82f6" top={12} />
@@ -1885,10 +2115,12 @@ function CropImageUpload({ id, label, required }: { id: string; label: string; r
               type="button"
               tabIndex={-1}
               aria-label="Upload image"
-              className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
+              disabled={isConnected}
+              title={isConnected ? "Connected input — disconnect to enter manually" : "Upload image"}
+              className={`nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700 disabled:pointer-events-none disabled:bg-gray-100 disabled:text-gray-400 ${connectedManualInputClass(isConnected)}`}
             >
               <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-              <span>Upload Image</span>
+              <span className="max-w-[180px] truncate">{isConnected ? displayConnectedValue(connected.value) || "Upload Image" : "Upload Image"}</span>
             </button>
           </HoverTooltip>
         </div>
@@ -1898,8 +2130,11 @@ function CropImageUpload({ id, label, required }: { id: string; label: string; r
   );
 }
 
-function CropImageNumber({ id, label, defaultValue }: { id: string; label: string; defaultValue: string }) {
+function CropImageNumber({ nodeId, id, label, defaultValue }: { nodeId: string; id: string; label: string; defaultValue: string }) {
   const [value, setValue] = useState(defaultValue);
+  const connected = useConnectedInputValue(nodeId, id);
+  const isConnected = connected.isConnected;
+  const displayValue = isConnected ? displayConnectedValue(connected.value) : value;
 
   const reset = () => setValue(defaultValue);
   const update = (next: string) => {
@@ -1925,24 +2160,29 @@ function CropImageNumber({ id, label, defaultValue }: { id: string; label: strin
             max="100"
             step="1"
             type="range"
-            value={value}
+            value={displayValue}
             onChange={(event) => update(event.target.value)}
-            className="nodrag h-2 min-w-[60px] flex-1 appearance-none rounded-lg bg-gray-200 accent-workflow-accent-500 disabled:opacity-50"
+            disabled={isConnected}
+            title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
+            className="nodrag h-2 min-w-[60px] flex-1 appearance-none rounded-lg bg-gray-200 accent-workflow-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
           />
           <input
             min="0"
             max="100"
             type="number"
-            value={value}
+            value={displayValue}
             onChange={(event) => update(event.target.value)}
-            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none disabled:opacity-50"
+            disabled={isConnected}
+            title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
+            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 disabled:opacity-60"
           />
           <HoverTooltip text="Reset" side="top" triggerClassName="inline-flex shrink-0">
             <button
               type="button"
               aria-label="Reset"
               onClick={reset}
-              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:opacity-50"
+              disabled={isConnected}
+              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
             </button>
@@ -1954,13 +2194,63 @@ function CropImageNumber({ id, label, defaultValue }: { id: string; label: strin
   );
 }
 
-function GeminiPreviewNode() {
+function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Record<string, unknown> }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [prompt, setPrompt] = useState(String(data?.prompt ?? ""));
+  const [systemPrompt, setSystemPrompt] = useState(String(data?.systemPrompt ?? ""));
+  const [response, setResponse] = useState("");
+  const [runError, setRunError] = useState("");
+  const [running, setRunning] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const { runningNodeIds } = useWorkflowRunContext();
+  const connectedPrompt = useConnectedInputValue(nodeId, "prompt");
+  const connectedSystemPrompt = useConnectedInputValue(nodeId, "system-prompt");
+  const effectivePrompt = connectedPrompt.isConnected ? displayConnectedValue(connectedPrompt.value) : prompt;
+  const effectiveSystemPrompt = connectedSystemPrompt.isConnected ? displayConnectedValue(connectedSystemPrompt.value) : systemPrompt;
+  const displayedResponse = response || displayConnectedValue(values[nodeId]?.response);
+  const isNodeRunning = running || runningNodeIds.has(nodeId);
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, "response", response);
+  }, [nodeId, response, setNodeHandleValue]);
+
+  const runGemini = useCallback(async () => {
+    if (!effectivePrompt.trim()) {
+      setRunError("Prompt is required");
+      return;
+    }
+    setRunning(true);
+    setRunError("");
+    setResponse("");
+    try {
+      const res = await fetch("/api/tasks/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: effectivePrompt,
+          systemPrompt: effectiveSystemPrompt.trim() || undefined,
+          model: "gemini-3.1-pro",
+        }),
+      });
+      const json = await res.json() as { output?: { response?: string }; error?: string; details?: { message?: string } | unknown };
+      if (!res.ok) {
+        const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
+        throw new Error(detailMessage ?? json.error ?? "Gemini run failed");
+      }
+      setResponse(json.output?.response ?? "");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Gemini run failed";
+      setRunError(message);
+      toast({ description: message });
+    } finally {
+      setRunning(false);
+    }
+  }, [effectivePrompt, effectiveSystemPrompt]);
 
   return (
-    <div className="w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">
+    <div className={`py-node-shell w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300 ${isNodeRunning ? "node-running" : ""}`}>
       <div className="flex h-[59px] items-start justify-between border-b border-gray-100 px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="w-full min-w-0 cursor-grab select-none truncate text-sm font-medium leading-5 text-gray-900">
@@ -1976,9 +2266,14 @@ function GeminiPreviewNode() {
           <button className="nodrag rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40">
             <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
           </button>
-          <button className="nodrag flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium leading-4 text-green-500 transition-all hover:bg-green-500/30">
+          <button
+            type="button"
+            disabled={isNodeRunning}
+            onClick={runGemini}
+            className="nodrag flex cursor-pointer items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium leading-4 text-green-500 transition-all hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+          >
             <Play size={12} strokeWidth={2} className="h-3 w-3 fill-current" />
-            <span>Run</span>
+            <span>{isNodeRunning ? "Running" : "Run"}</span>
           </button>
           <button
             ref={menuButtonRef}
@@ -1999,11 +2294,12 @@ function GeminiPreviewNode() {
 
       <div className="px-4 py-4">
         <div className="space-y-4">
-          <GeminiTextarea id="prompt" label="Prompt" required placeholder="Enter your prompt..." />
-          <GeminiTextarea id="system-prompt" label="System Prompt" placeholder="You are a helpful assistant..." />
-          <GeminiUpload id="image" label="Image (Vision)" buttonText="Upload Image" showRequirements handleColor="#3b82f6" />
-          <GeminiUpload id="video" label="Video" buttonText="Upload Video" handleColor="#22c55e" />
-          <GeminiUpload id="audio" label="Audio" buttonText="Upload Audio" handleColor="#06b6d4" />
+          <GeminiTextarea nodeId={nodeId} id="prompt" label="Prompt" required placeholder="Enter your prompt..." value={prompt} onChange={setPrompt} />
+          <GeminiTextarea nodeId={nodeId} id="system-prompt" label="System Prompt" placeholder="You are a helpful assistant..." value={systemPrompt} onChange={setSystemPrompt} />
+          <GeminiUpload nodeId={nodeId} id="image" label="Image (Vision)" buttonText="Upload Image" showRequirements handleColor="#3b82f6" />
+          <GeminiUpload nodeId={nodeId} id="video" label="Video" buttonText="Upload Video" handleColor="#22c55e" />
+          <GeminiUpload nodeId={nodeId} id="audio" label="Audio" buttonText="Upload Audio" handleColor="#06b6d4" />
+          <GeminiUpload nodeId={nodeId} id="file" label="File" buttonText="Upload File" handleColor="#a855f7" />
         </div>
 
         <div className="relative">
@@ -2013,7 +2309,7 @@ function GeminiPreviewNode() {
           </button>
         </div>
 
-        {settingsOpen && <GeminiSettings />}
+        {settingsOpen && <GeminiSettings nodeId={nodeId} />}
 
         <div className="mt-4 border-t border-gray-100 pt-4">
           <div className="relative overflow-visible">
@@ -2040,7 +2336,15 @@ function GeminiPreviewNode() {
             </div>
             <div className="mb-1.5 text-xs font-normal leading-4 text-gray-500">Response</div>
             <div className="min-h-[84px] rounded-lg border border-gray-200 bg-white p-3">
-              <div className="py-6 text-center text-xs leading-4 text-gray-400">No output yet</div>
+              {isNodeRunning ? (
+                <div className="py-6 text-center text-xs leading-4 text-gray-400">Running Gemini…</div>
+              ) : runError ? (
+                <div className="whitespace-pre-wrap text-xs leading-5 text-red-500">{runError}</div>
+              ) : displayedResponse ? (
+                <div className="whitespace-pre-wrap text-sm leading-5 text-gray-900">{displayedResponse}</div>
+              ) : (
+                <div className="py-6 text-center text-xs leading-4 text-gray-400">No output yet</div>
+              )}
             </div>
           </div>
         </div>
@@ -2058,16 +2362,25 @@ function GeminiPreviewNode() {
 }
 
 function GeminiTextarea({
+  nodeId,
   id,
   label,
   required,
   placeholder,
+  value,
+  onChange,
 }: {
+  nodeId: string;
   id: string;
   label: string;
   required?: boolean;
   placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
 }) {
+  const connected = useConnectedInputValue(nodeId, id);
+  const displayValue = connected.isConnected ? displayConnectedValue(connected.value) : value;
+
   return (
     <div className="relative">
       <FieldHandle id={id} color="#f59e0b" />
@@ -2083,7 +2396,11 @@ function GeminiTextarea({
         <textarea
           rows={3}
           placeholder={placeholder}
-          className="nodrag nowheel h-[86px] w-full resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] p-3 text-sm leading-5 text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-300"
+          value={displayValue}
+          onChange={(event) => onChange(event.target.value)}
+          disabled={connected.isConnected}
+          title={connected.isConnected ? "Connected input — disconnect to enter manually" : undefined}
+          className={`nodrag nopan nowheel h-[86px] w-full resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] p-3 text-sm leading-5 text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-300 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500 disabled:opacity-70 ${connectedManualInputClass(connected.isConnected)}`}
         />
         <div className="absolute bottom-2 right-2">
           <HoverTooltip text="Expand" side="top" triggerClassName="inline-flex">
@@ -2098,12 +2415,14 @@ function GeminiTextarea({
 }
 
 function GeminiUpload({
+  nodeId,
   id,
   label,
   buttonText,
   showRequirements,
   handleColor,
 }: {
+  nodeId: string;
   id: string;
   label: string;
   buttonText: string;
@@ -2114,16 +2433,21 @@ function GeminiUpload({
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; url: string; file: File }[]>([]);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
+  const connected = useConnectedInputValue(nodeId, id);
+  const isConnected = connected.isConnected;
 
   const handleUpload = useCallback((file: File) => {
-    const url = URL.createObjectURL(file);
-    setUploadedFiles((prev) => [...prev, { name: file.name, url, file }]);
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setUploadedFiles((prev) => [...prev, { name: file.name, url: reader.result as string, file }]);
+      }
+    };
+    reader.readAsDataURL(file);
   }, []);
 
   const removeFile = useCallback((index: number) => {
     setUploadedFiles((prev) => {
-      const f = prev[index];
-      if (f) URL.revokeObjectURL(f.url);
       return prev.filter((_, i) => i !== index);
     });
   }, []);
@@ -2159,20 +2483,22 @@ function GeminiUpload({
               tabIndex={-1}
               aria-label={`Upload ${buttonText.replace(/^Upload\s+/i, "").toLowerCase()}`}
               onClick={() => setUploadPopoverOpen((open) => !open)}
+              disabled={isConnected}
+              title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
               data-state={uploadPopoverOpen ? "open" : "closed"}
-              className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
+              className={`nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700 disabled:pointer-events-none disabled:bg-gray-100 disabled:text-gray-400 ${connectedManualInputClass(isConnected)}`}
             >
               <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-              <span className="capitalize">{buttonText}</span>
+              <span className="max-w-[180px] truncate capitalize">{isConnected ? displayConnectedValue(connected.value) || buttonText : buttonText}</span>
             </button>
           </HoverTooltip>
-          <UploadPopover
+          {!isConnected && <UploadPopover
             open={uploadPopoverOpen}
             anchorRef={uploadButtonRef}
             onClose={() => setUploadPopoverOpen(false)}
             onSelectAsset={() => setAssetModalOpen(true)}
             onUpload={handleUpload}
-          />
+          />}
           <MediaLibraryModal open={assetModalOpen} onClose={() => setAssetModalOpen(false)} />
           {showRequirements && (
             <div className="mt-1 flex items-center gap-1">
@@ -2190,22 +2516,22 @@ function GeminiUpload({
   );
 }
 
-function GeminiSettings() {
+function GeminiSettings({ nodeId }: { nodeId: string }) {
   return (
     <div className="mt-4 space-y-4 border-t border-gray-100 pt-4">
-      <GeminiSettingSlider label="Temperature" value="0.7" min="0" max="2" step="0.1" tooltip="Controls randomness of the generated response." />
-      <GeminiSettingNumber label="Max Tokens" value="1024" min="1" max="8192" tooltip="Maximum number of tokens to generate." />
-      <GeminiSettingBoolean label="Reasoning" tooltip="Enable or disable reasoning-oriented generation." />
-      <GeminiSettingSlider label="Top P" value="1" min="0" max="1" step="0.05" tooltip="Nucleus sampling threshold." />
-      <GeminiSettingSlider label="Top K" value="0" min="0" max="500" step="1" tooltip="Restrict sampling to the top K tokens." />
-      <GeminiSettingSlider label="Frequency Penalty" value="0" min="-2" max="2" step="0.1" tooltip="Penalizes tokens based on frequency so far." />
-      <GeminiSettingSlider label="Presence Penalty" value="0" min="-2" max="2" step="0.1" tooltip="Penalizes tokens already present in the text." />
-      <GeminiSettingSlider label="Repetition Penalty" value="1" min="0" max="2" step="0.05" tooltip="Discourages repetitive token selection." />
-      <GeminiSettingSlider label="Min P" value="0" min="0" max="1" step="0.05" tooltip="Minimum probability threshold for sampling." />
-      <GeminiSettingSlider label="Top A" value="0" min="0" max="1" step="0.05" tooltip="Alternative sampling threshold parameter." />
-      <GeminiSettingNumber label="Seed" value="0" min="0" step="1" tooltip="Set a fixed seed for more reproducible output." />
-      <GeminiSettingTextarea label="Stop Sequences" placeholder="e.g. END, STOP, ###" tooltip="Generation stops when any sequence matches." />
-      <GeminiSettingBoolean label="JSON Mode" tooltip="Force the model to respond with JSON." />
+      <GeminiSettingSlider nodeId={nodeId} label="Temperature" value="0.7" min="0" max="2" step="0.1" tooltip="Controls randomness of the generated response." />
+      <GeminiSettingNumber nodeId={nodeId} label="Max Tokens" value="1024" min="1" max="8192" tooltip="Maximum number of tokens to generate." />
+      <GeminiSettingBoolean nodeId={nodeId} label="Reasoning" tooltip="Enable or disable reasoning-oriented generation." />
+      <GeminiSettingSlider nodeId={nodeId} label="Top P" value="1" min="0" max="1" step="0.05" tooltip="Nucleus sampling threshold." />
+      <GeminiSettingSlider nodeId={nodeId} label="Top K" value="0" min="0" max="500" step="1" tooltip="Restrict sampling to the top K tokens." />
+      <GeminiSettingSlider nodeId={nodeId} label="Frequency Penalty" value="0" min="-2" max="2" step="0.1" tooltip="Penalizes tokens based on frequency so far." />
+      <GeminiSettingSlider nodeId={nodeId} label="Presence Penalty" value="0" min="-2" max="2" step="0.1" tooltip="Penalizes tokens already present in the text." />
+      <GeminiSettingSlider nodeId={nodeId} label="Repetition Penalty" value="1" min="0" max="2" step="0.05" tooltip="Discourages repetitive token selection." />
+      <GeminiSettingSlider nodeId={nodeId} label="Min P" value="0" min="0" max="1" step="0.05" tooltip="Minimum probability threshold for sampling." />
+      <GeminiSettingSlider nodeId={nodeId} label="Top A" value="0" min="0" max="1" step="0.05" tooltip="Alternative sampling threshold parameter." />
+      <GeminiSettingNumber nodeId={nodeId} label="Seed" value="0" min="0" step="1" tooltip="Set a fixed seed for more reproducible output." />
+      <GeminiSettingTextarea nodeId={nodeId} label="Stop Sequences" placeholder="e.g. END, STOP, ###" tooltip="Generation stops when any sequence matches." />
+      <GeminiSettingBoolean nodeId={nodeId} label="JSON Mode" tooltip="Force the model to respond with JSON." />
     </div>
   );
 }
@@ -2228,6 +2554,7 @@ function GeminiSettingLabel({
 }
 
 function GeminiSettingSlider({
+  nodeId,
   label,
   value,
   min,
@@ -2235,6 +2562,7 @@ function GeminiSettingSlider({
   step,
   tooltip,
 }: {
+  nodeId: string;
   label: string;
   value: string;
   min: string;
@@ -2243,10 +2571,14 @@ function GeminiSettingSlider({
   tooltip: string;
 }) {
   const [currentValue, setCurrentValue] = useState(value);
+  const handleId = `setting-${label}`;
+  const connected = useConnectedInputValue(nodeId, handleId);
+  const isConnected = connected.isConnected;
+  const displayValue = isConnected ? displayConnectedValue(connected.value) : currentValue;
 
   return (
     <div className="relative overflow-visible">
-      <FieldHandle id={`setting-${label}`} color="#ec4899" top={14} />
+      <FieldHandle id={handleId} color="#ec4899" top={14} />
       <div className="space-y-1.5">
         <div className="flex min-w-0 items-center gap-2">
           <GeminiSettingLabel label={label} tooltip={tooltip} />
@@ -2255,19 +2587,23 @@ function GeminiSettingSlider({
             min={min}
             max={max}
             step={step}
-            value={currentValue}
+            value={displayValue}
             onChange={(event) => setCurrentValue(event.target.value)}
-            className="nodrag h-2 min-w-[60px] flex-1 appearance-none rounded-lg bg-gray-200 accent-workflow-accent-500 disabled:opacity-50"
+            disabled={isConnected}
+            title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
+            className="nodrag h-2 min-w-[60px] flex-1 appearance-none rounded-lg bg-gray-200 accent-workflow-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
           />
           <input
             type="number"
             min={min}
             max={max}
-            value={currentValue}
+            value={displayValue}
             onChange={(event) => setCurrentValue(event.target.value)}
-            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none disabled:opacity-50"
+            disabled={isConnected}
+            title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
+            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 disabled:opacity-60"
           />
-          <ResetSettingButton />
+          <ResetSettingButton disabled={isConnected} />
           <AddToRequestButton />
         </div>
       </div>
@@ -2276,6 +2612,7 @@ function GeminiSettingSlider({
 }
 
 function GeminiSettingNumber({
+  nodeId,
   label,
   value,
   min,
@@ -2283,6 +2620,7 @@ function GeminiSettingNumber({
   step,
   tooltip,
 }: {
+  nodeId: string;
   label: string;
   value: string;
   min?: string;
@@ -2291,10 +2629,14 @@ function GeminiSettingNumber({
   tooltip: string;
 }) {
   const [currentValue, setCurrentValue] = useState(value);
+  const handleId = `setting-${label}`;
+  const connected = useConnectedInputValue(nodeId, handleId);
+  const isConnected = connected.isConnected;
+  const displayValue = isConnected ? displayConnectedValue(connected.value) : currentValue;
 
   return (
     <div className="relative overflow-visible">
-      <FieldHandle id={`setting-${label}`} color="#ec4899" top={14} />
+      <FieldHandle id={handleId} color="#ec4899" top={14} />
       <div className="space-y-1.5">
         <div className="flex min-w-0 items-center gap-3">
           <GeminiSettingLabel label={label} tooltip={tooltip} />
@@ -2303,11 +2645,13 @@ function GeminiSettingNumber({
             min={min}
             max={max}
             step={step}
-            value={currentValue}
+            value={displayValue}
             onChange={(event) => setCurrentValue(event.target.value)}
-            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none focus:border-workflow-accent-500 disabled:opacity-50"
+            disabled={isConnected}
+            title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
+            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none focus:border-workflow-accent-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 disabled:opacity-60"
           />
-          <ResetSettingButton />
+          <ResetSettingButton disabled={isConnected} />
           <AddToRequestButton />
         </div>
       </div>
@@ -2316,30 +2660,39 @@ function GeminiSettingNumber({
 }
 
 function GeminiSettingBoolean({
+  nodeId,
   label,
   tooltip,
 }: {
+  nodeId: string;
   label: string;
   tooltip: string;
 }) {
+  const handleId = `setting-${label}`;
+  const connected = useConnectedInputValue(nodeId, handleId);
+  const isConnected = connected.isConnected;
+  const connectedBoolean = connected.value === true || displayConnectedValue(connected.value).toLowerCase() === "true";
+
   return (
     <div className="relative flex min-w-0 items-center gap-3 overflow-visible">
-      <FieldHandle id={`setting-${label}`} color="#6366f1" top={14} />
+      <FieldHandle id={handleId} color="#6366f1" top={14} />
       <GeminiSettingLabel label={label} tooltip={tooltip} />
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <div className="flex shrink-0 items-center gap-1.5">
-          <span className="text-[10px] font-medium text-gray-600">False</span>
+          <span className={`text-[10px] font-medium ${isConnected ? (connectedBoolean ? "text-gray-400" : "text-gray-600") : "text-gray-600"}`}>False</span>
           <button
             type="button"
             role="switch"
-            aria-checked="false"
-            data-state="unchecked"
+            aria-checked={connectedBoolean}
+            data-state={connectedBoolean ? "checked" : "unchecked"}
             value="on"
+            disabled={isConnected}
+            title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
             className="peer nodrag inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-gray-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=unchecked]:bg-input data-[state=checked]:bg-workflow-accent-500"
           >
-            <span data-state="unchecked" className="pointer-events-none block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0" />
+            <span data-state={connectedBoolean ? "checked" : "unchecked"} className="pointer-events-none block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0" />
           </button>
-          <span className="text-[10px] font-medium text-gray-400">True</span>
+          <span className={`text-[10px] font-medium ${isConnected && connectedBoolean ? "text-gray-600" : "text-gray-400"}`}>True</span>
         </div>
         <AddToRequestButton />
       </div>
@@ -2348,17 +2701,23 @@ function GeminiSettingBoolean({
 }
 
 function GeminiSettingTextarea({
+  nodeId,
   label,
   placeholder,
   tooltip,
 }: {
+  nodeId: string;
   label: string;
   placeholder: string;
   tooltip: string;
 }) {
+  const handleId = `setting-${label}`;
+  const connected = useConnectedInputValue(nodeId, handleId);
+  const isConnected = connected.isConnected;
+
   return (
     <div className="relative overflow-visible">
-      <FieldHandle id={`setting-${label}`} color="#f59e0b" top={14} />
+      <FieldHandle id={handleId} color="#f59e0b" top={14} />
       <div className="mb-1.5 flex h-7 items-center text-xs text-gray-500">
         <GeminiSettingLabel label={label} tooltip={tooltip} />
         <span className="ml-auto">
@@ -2368,7 +2727,10 @@ function GeminiSettingTextarea({
       <textarea
         rows={2}
         placeholder={placeholder}
-        className="nodrag nowheel w-full resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] p-3 text-sm text-gray-900 outline-none focus:border-workflow-accent-500 disabled:opacity-50"
+        value={isConnected ? displayConnectedValue(connected.value) : undefined}
+        disabled={isConnected}
+        title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
+        className="nodrag nopan nowheel w-full resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] p-3 text-sm text-gray-900 outline-none focus:border-workflow-accent-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 disabled:opacity-60"
       />
     </div>
   );
@@ -2930,7 +3292,7 @@ function NodePicker({
 }
 
 function TopLeftCanvasTitle() {
-  const [title, setTitle] = useState("Dummy Workflow Title");
+  const [title, setTitle] = useState("Trial Task Workflow");
 
   return (
     <div className="pointer-events-none absolute left-4 top-4 z-50 sm:left-16">
@@ -2961,6 +3323,7 @@ function TopLeftCanvasTitle() {
 }
 
 function TopRightCanvasControls() {
+  const { runWorkflow, workflowRunning } = useWorkflowRunContext();
   const metricClass = "inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white/90 px-2.5 text-[11px] font-medium text-gray-700 shadow-sm backdrop-blur";
 
   return (
@@ -2984,7 +3347,7 @@ function TopRightCanvasControls() {
             </span>
           </span>
           <HoverTooltip text="Run Workflow" side="bottom" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
-            <button aria-label="Run Workflow" className="flex h-8 w-9 items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white shadow-sm transition-all hover:bg-[#4f46e5] disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" aria-label="Run Workflow" disabled={workflowRunning} onClick={runWorkflow} className="flex h-8 w-9 cursor-pointer items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white shadow-sm transition-all hover:bg-[#4f46e5] disabled:cursor-not-allowed disabled:opacity-50">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="24"
@@ -3196,6 +3559,22 @@ export default function WorkflowCanvasPage() {
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodeValues, setNodeValues] = useState<NodeOutputValues>({});
+  const [runningNodeIds, setRunningNodeIds] = useState<Set<string>>(new Set());
+  const [workflowRunning, setWorkflowRunning] = useState(false);
+
+  const setNodeHandleValue = useCallback((nodeId: string, handleId: string, value: unknown) => {
+    setNodeValues((current) => {
+      if (current[nodeId]?.[handleId] === value) return current;
+      return {
+        ...current,
+        [nodeId]: {
+          ...(current[nodeId] ?? {}),
+          [handleId]: value,
+        },
+      };
+    });
+  }, []);
 
   const onNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChangeBase>[0]) => {
@@ -3318,6 +3697,87 @@ export default function WorkflowCanvasPage() {
     ]);
   }, [setNodes]);
 
+  const runWorkflow = useCallback(async () => {
+    if (workflowRunning) return;
+    setWorkflowRunning(true);
+    const outputs: NodeOutputValues = { ...nodeValues };
+    const completed = new Set(nodes.filter((node) => node.type === "request").map((node) => node.id));
+    const executable = nodes.filter((node) => node.type === "geminiPreview" || node.type === "cropImage");
+
+    const readConnected = (targetNodeId: string, targetHandle: string) => {
+      const edge = edges.find((item) => item.target === targetNodeId && item.targetHandle === targetHandle);
+      if (!edge) return "";
+      const sourceHandle = edge.sourceHandle ?? "result";
+      return displayConnectedValue(outputs[edge.source]?.[sourceHandle]);
+    };
+
+    try {
+      while (executable.some((node) => !completed.has(node.id))) {
+        const ready = executable.filter((node) => {
+          if (completed.has(node.id)) return false;
+          const upstream = edges.filter((edge) => edge.target === node.id).map((edge) => edge.source);
+          return upstream.every((id) => completed.has(id) || !nodes.some((nodeItem) => nodeItem.id === id && executable.some((exec) => exec.id === id)));
+        });
+        if (ready.length === 0) throw new Error("No runnable nodes found. Check for cycles or missing inputs.");
+
+        setRunningNodeIds(new Set(ready.map((node) => node.id)));
+        const results = await Promise.all(ready.map(async (node) => {
+          if (node.type === "geminiPreview") {
+            const prompt = readConnected(node.id, "prompt");
+            const systemPrompt = readConnected(node.id, "system-prompt");
+            const res = await fetch("/api/tasks/gemini", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ prompt, systemPrompt: systemPrompt || undefined, model: "gemini-3.1-pro" }),
+            });
+            const json = await res.json() as { output?: { response?: string }; error?: string; details?: { message?: string } | unknown };
+            if (!res.ok) {
+              const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
+              throw new Error(detailMessage ?? json.error ?? `Gemini node ${node.id} failed`);
+            }
+            return { nodeId: node.id, values: { response: json.output?.response ?? "", result: json.output?.response ?? "" } };
+          }
+
+          const res = await fetch("/api/tasks/crop-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              inputImageUrl: readConnected(node.id, "input-image"),
+              x: Number(readConnected(node.id, "x-position") || 0),
+              y: Number(readConnected(node.id, "y-position") || 0),
+              width: Number(readConnected(node.id, "width") || 100),
+              height: Number(readConnected(node.id, "height") || 100),
+            }),
+          });
+          const json = await res.json() as { output?: { outputImageUrl?: string }; error?: string; details?: { message?: string } | unknown };
+          if (!res.ok) {
+            const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
+            throw new Error(detailMessage ?? json.error ?? `Crop node ${node.id} failed`);
+          }
+          return { nodeId: node.id, values: { "output-image": json.output?.outputImageUrl ?? "", outputImageUrl: json.output?.outputImageUrl ?? "" } };
+        }));
+
+        for (const result of results) {
+          outputs[result.nodeId] = { ...(outputs[result.nodeId] ?? {}), ...result.values };
+          completed.add(result.nodeId);
+        }
+        setNodeValues((current) => {
+          const next = { ...current };
+          for (const result of results) {
+            next[result.nodeId] = { ...(next[result.nodeId] ?? {}), ...result.values };
+          }
+          return next;
+        });
+      }
+      toast({ description: "Workflow run completed" });
+    } catch (error) {
+      toast({ description: error instanceof Error ? error.message : "Workflow run failed" });
+    } finally {
+      setRunningNodeIds(new Set());
+      setWorkflowRunning(false);
+    }
+  }, [edges, nodeValues, nodes, workflowRunning]);
+
   return (
     <ReactFlowProvider>
       <Toaster />
@@ -3326,6 +3786,8 @@ export default function WorkflowCanvasPage() {
         <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
 
         <div className="relative flex-1">
+          <NodeValueContext.Provider value={{ values: nodeValues, setNodeHandleValue }}>
+          <WorkflowRunContext.Provider value={{ runningNodeIds, runWorkflow, workflowRunning }}>
           <ReactFlow
             nodes={nodes}
           edges={edges}
@@ -3358,6 +3820,8 @@ export default function WorkflowCanvasPage() {
           <BottomToolbar />
           <CenterNodeToolbar onAddGemini={handleAddGemini} onAddCrop={handleAddCrop} onAddStickyNote={handleAddStickyNote} />
           </ReactFlow>
+          </WorkflowRunContext.Provider>
+          </NodeValueContext.Provider>
         </div>
       </div>
     </ReactFlowProvider>

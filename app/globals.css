@@ -65,6 +65,19 @@
       rgba(0, 0, 0, 0.25) 0px 25px 50px -12px !important;
   }
 
+  @keyframes node-pulse {
+    0%, 100% {
+      box-shadow: rgba(99, 102, 241, 0.4) 0px 0px 0px 0px;
+    }
+    50% {
+      box-shadow: rgba(99, 102, 241, 0) 0px 0px 0px 8px;
+    }
+  }
+
+  .node-running {
+    animation: node-pulse 1.5s ease-in-out infinite !important;
+  }
+
   .animate-fade-in {
     animation: fade-in 200ms ease-out both;
   }
