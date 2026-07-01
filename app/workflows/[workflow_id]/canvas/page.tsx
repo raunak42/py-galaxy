@@ -76,6 +76,11 @@ import {
   ArrowUpDown,
   Folder,
   Check,
+  AlignLeft,
+  Hash,
+  Music,
+  Video,
+  File,
 } from "lucide-react";
 
 // ---- Zoom limits: canvas should only zoom between 10% and 200% ----
@@ -204,6 +209,7 @@ function HoverTooltip({
   scaleWithZoom = true,
   className = "",
   triggerClassName = "",
+  maxWidth,
 }: {
   text: string;
   shortcut?: string;
@@ -213,6 +219,7 @@ function HoverTooltip({
   scaleWithZoom?: boolean;
   className?: string;
   triggerClassName?: string;
+  maxWidth?: number;
 }) {
   const [mounted, setMounted] = useState(false);
   const [open, setOpen] = useState(false);
@@ -292,7 +299,7 @@ function HoverTooltip({
   const visualClass =
     variant === "dark"
       ? "flex items-center gap-1.5 rounded-lg border-0 bg-gray-900 px-2.5 py-1.5 text-xs font-medium leading-4 text-white shadow-lg"
-      : "rounded-[18px] border border-[#e5e5e5] bg-[#f6f6f4] px-3 py-1.5 text-xs font-normal leading-4 text-[#1b1b18] shadow-md";
+      : "rounded-[18px] border border-[#e5e5e5] bg-[#f6f6f4] px-3 py-1.5 text-[11px] text-gray-700 shadow-lg";
   const accessibleText = shortcut ? `${text} ${shortcut}` : text;
 
   return (
@@ -321,7 +328,8 @@ function HoverTooltip({
               top: 0,
               transform: `translate(${position.x}px, ${position.y}px) scale(${scaleWithZoom ? zoom : 1})`,
               transformOrigin: "top left",
-              minWidth: "max-content",
+              minWidth: maxWidth ? undefined : "max-content",
+              maxWidth: maxWidth ?? undefined,
               willChange: "transform",
               zIndex: 100,
               ['--radix-popper-transform-origin' as string]: side === "top" ? '50% 100%' : side === "bottom" ? '50% 0px' : side === "left" ? '100% 50%' : '0px 50%',
@@ -332,7 +340,7 @@ function HoverTooltip({
               data-side={side}
               data-align="center"
               data-state={open ? "instant-open" : "closed"}
-              className={`py-tooltip-content z-[100] overflow-hidden animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 ${visualClass} ${className}`}
+               className={`py-tooltip-content z-[100] overflow-hidden animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 ${maxWidth ? "whitespace-normal" : ""} ${visualClass} ${className}`}
               style={{
                 ['--radix-tooltip-content-transform-origin' as string]: 'var(--radix-popper-transform-origin)',
                 ['--radix-tooltip-content-available-width' as string]: 'var(--radix-popper-available-width)',
@@ -340,6 +348,7 @@ function HoverTooltip({
                 ['--radix-tooltip-trigger-width' as string]: 'var(--radix-popper-anchor-width)',
                 ['--radix-tooltip-trigger-height' as string]: 'var(--radix-popper-anchor-height)',
                 animationFillMode: open ? undefined : 'forwards',
+                width: maxWidth ? "auto" : undefined,
               }}
             >
               <span>{text}</span>
@@ -374,13 +383,15 @@ function InfoTooltip({
   text,
   size = 12,
   className = "ml-1",
+  maxWidth,
 }: {
   text: string;
   size?: number;
   className?: string;
+  maxWidth?: number;
 }) {
   return (
-    <HoverTooltip text={text} side="bottom" triggerClassName={`${className} inline-flex shrink-0 cursor-pointer text-gray-400`}>
+    <HoverTooltip text={text} side="bottom" maxWidth={maxWidth} triggerClassName={`${className} inline-flex shrink-0 cursor-pointer text-gray-400`}>
       <Info size={size} strokeWidth={2} className={size === 14 ? "h-3.5 w-3.5" : "h-3 w-3"} />
     </HoverTooltip>
   );
@@ -1074,7 +1085,31 @@ function LiveNodeShell({ children }: { children: ReactNode }) {
   return <div className="w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">{children}</div>;
 }
 
+const FIELD_TOOLTIPS: Record<string, string> = {
+  text_field: "Text input — accepts any string value",
+  number_field: "Number input — accepts numeric values",
+  boolean_field: "Boolean toggle — true or false",
+  image_field: "Image input — accepts an image URL",
+  audio_field: "Audio input — accepts an audio URL",
+  video_field: "Video input — accepts a video URL",
+  media_field: "Media input — accepts audio or video files",
+  file_field: "File input — accepts any file upload",
+};
+
+function fieldTypeFromLabel(label: string): string {
+  if (label.startsWith("number")) return "number_field";
+  if (label.startsWith("boolean") || label.startsWith("bool")) return "boolean_field";
+  if (label.startsWith("image")) return "image_field";
+  if (label.startsWith("audio")) return "audio_field";
+  if (label.startsWith("video")) return "video_field";
+  if (label.startsWith("media") || label.startsWith("avmedia")) return "media_field";
+  if (label.startsWith("file")) return "file_field";
+  return "text_field";
+}
+
 function RequestFieldHeader({ label, canDelete = true }: { label: string; canDelete?: boolean }) {
+  const fieldType = fieldTypeFromLabel(label);
+  const tooltipText = FIELD_TOOLTIPS[fieldType] ?? FIELD_TOOLTIPS.text_field;
   return (
     <div className="mb-2 flex w-full min-w-0 items-center gap-2">
       <div className="nodrag nopan shrink-0 cursor-grab text-gray-400 hover:text-gray-600 active:cursor-grabbing">
@@ -1083,9 +1118,7 @@ function RequestFieldHeader({ label, canDelete = true }: { label: string; canDel
       <span className="group/label flex min-w-0 flex-1 items-center gap-1 text-xs font-medium leading-4 text-gray-900 hover:text-[#6366f1]">
         <span className="truncate">{label}</span>
         <Pencil size={12} strokeWidth={2} className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover/label:opacity-100" />
-        <span className="shrink-0 text-gray-400">
-          <Info size={12} strokeWidth={2} className="h-3 w-3 cursor-help" />
-        </span>
+        <InfoTooltip text={tooltipText} size={12} className="shrink-0 text-gray-400" maxWidth={200} />
       </span>
       <div className="ml-auto flex items-center gap-1">
         <button type="button" title="Copy value" className="nodrag rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
@@ -1144,24 +1177,138 @@ function RequestImageField({ id, label }: { id: string; label: string }) {
   );
 }
 
+const FIELD_TYPE_ITEMS = [
+  { type: "text_field", label: "Text", icon: AlignLeft },
+  { type: "number_field", label: "Number", icon: Hash },
+  { type: "boolean_field", label: "Boolean", icon: Check },
+  { type: "image_field", label: "Image", icon: ImageIcon },
+  { type: "audio_field", label: "Audio", icon: Music },
+  { type: "video_field", label: "Video", icon: Video },
+  { type: "media_field", label: "Media", icon: Music },
+  { type: "file_field", label: "File", icon: File },
+];
+
+function FieldTypeMenu({ onSelect }: { onSelect: (type: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+  const menuId = useId();
+
+  const show = useCallback(() => {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPosition({ x: rect.right - 140, y: rect.bottom + 4 });
+    setMounted(true);
+    requestAnimationFrame(() => setOpen(true));
+  }, []);
+
+  const hide = useCallback(() => {
+    setOpen(false);
+    setTimeout(() => setMounted(false), 150);
+  }, []);
+
+  const select = useCallback((type: string) => {
+    setOpen(false);
+    setTimeout(() => {
+      setMounted(false);
+      onSelect(type);
+    }, 150);
+  }, [onSelect]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target instanceof Node ? e.target : null;
+      if (btnRef.current && target && !btnRef.current.contains(target)) {
+        const menuEl = document.getElementById(menuId);
+        if (menuEl && !menuEl.contains(target)) {
+          hide();
+        }
+      }
+    };
+    window.addEventListener("mousedown", handler, true);
+    return () => window.removeEventListener("mousedown", handler, true);
+  }, [open, hide, menuId]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-state={open ? "open" : "closed"}
+        onClick={show}
+        className="nodrag flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+      >
+        <Plus size={16} strokeWidth={2} className="h-4 w-4" />
+      </button>
+      {mounted &&
+        createPortal(
+          <div
+            id={menuId}
+            role="menu"
+            aria-orientation="vertical"
+            data-state={open ? "open" : "closed"}
+            className={`fixed z-50 min-w-[140px] overflow-hidden rounded-[18px] border border-gray-200 bg-white p-1 text-gray-700 shadow-lg transition-all duration-150 ${open ? "scale-100 opacity-100" : "scale-95 opacity-0"}`}
+            style={{ left: position.x, top: position.y }}
+          >
+            {FIELD_TYPE_ITEMS.map((item) => (
+              <div
+                key={item.type}
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => select(item.type)}
+                className="relative flex cursor-pointer select-none items-center gap-2 rounded-[18px] px-3 py-2 text-xs text-gray-700 outline-none transition-colors hover:bg-gray-100 focus:bg-gray-100"
+              >
+                <span className="text-gray-500">
+                  <item.icon size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+                </span>
+                <span>{item.label}</span>
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 function RequestInputsNode() {
+  const [fields, setFields] = useState([
+    { type: "text_field", id: "text_field", label: "text_field" },
+    { type: "image_field", id: "image_field", label: "image_field" },
+  ]);
+
+  const addField = useCallback((type: string) => {
+    setFields((prev) => {
+      const existing = prev.filter((f) => f.type === type);
+      const id = existing.length === 0 ? type : `${type}_${existing.length + 1}`;
+      return [...prev, { type, id, label: id }];
+    });
+  }, []);
+
   return (
     <div className="w-[380px] rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl">
       <div className="flex h-[57px] items-center justify-between border-b border-gray-100 px-4 py-3">
         <div className="flex items-center gap-1.5">
           <span className="text-sm font-medium leading-5 text-gray-900">Request-Inputs</span>
-          <InfoTooltip text="Define the input fields for your workflow. These become the request parameters when running via Playground or API." size={14} className="" />
+          <InfoTooltip text="Define the input fields for your workflow. These become the request parameters when running via Playground or API." size={14} className="" maxWidth={280} />
         </div>
         <div className="flex items-center gap-1.5">
-          <button type="button" title="Add input" className="nodrag flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 disabled:opacity-50">
-            <Plus size={16} strokeWidth={2} className="h-4 w-4" />
-          </button>
+          <FieldTypeMenu onSelect={addField} />
         </div>
       </div>
       <div className="relative w-full px-4 py-4">
         <div className="w-full space-y-4">
-          <RequestTextField id="text_field" label="text_field" value="Product: Wireless Bluetooth Headphones. Features: Noise cancellation, 30-hour battery, foldable design." />
-          <RequestImageField id="image_field" label="image_field" />
+          {fields.map((f) =>
+            f.type === "image_field" ? (
+              <RequestImageField key={f.id} id={f.id} label={f.label} />
+            ) : (
+              <RequestTextField key={f.id} id={f.id} label={f.label} value="" />
+            ),
+          )}
         </div>
       </div>
     </div>
@@ -1195,7 +1342,7 @@ function ResponseNode() {
           <FileOutput size={16} strokeWidth={2} className="h-4 w-4" />
         </div>
         <span className="text-sm font-semibold leading-5 text-gray-900">Response</span>
-        <InfoTooltip text="Connect node outputs here to define what your workflow returns. These values appear as results in Playground and API responses." size={14} className="" />
+        <InfoTooltip text="Connect node outputs here to define what your workflow returns. These values appear as results in Playground and API responses." size={14} className="" maxWidth={280} />
       </div>
       <div className="space-y-3 p-4">
         <div className="relative h-6">

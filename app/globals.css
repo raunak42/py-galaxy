@@ -198,8 +198,6 @@
   .py-tooltip-content {
     display: block;
     width: max-content;
-    max-width: none !important;
-    white-space: nowrap;
     animation-duration: 0.15s;
     animation-timing-function: ease;
     transform-origin: var(--radix-tooltip-content-transform-origin);
