@@ -9,6 +9,7 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
+  useEdges,
   addEdge,
   useReactFlow,
   useViewport,
@@ -817,17 +818,22 @@ function UploadPopover({
   anchorRef,
   onClose,
   onSelectAsset,
+  onUpload,
+  accept = "image/*",
 }: {
   open: boolean;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   onSelectAsset: () => void;
+  onUpload?: (file: File) => void;
+  accept?: string;
 }) {
   const { zoom } = useViewport();
   const [mounted, setMounted] = useState(open);
   const [visible, setVisible] = useState(open);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const popoverId = useId();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const updatePosition = useCallback(() => {
     const rect = anchorRef.current?.getBoundingClientRect();
@@ -876,6 +882,15 @@ function UploadPopover({
     };
   }, [anchorRef, mounted, onClose, popoverId, updatePosition]);
 
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && onUpload) {
+      onUpload(file);
+    }
+    onClose();
+    if (e.target) e.target.value = "";
+  }, [onUpload, onClose]);
+
   if (!mounted || typeof document === "undefined") return null;
 
   return createPortal(
@@ -894,6 +909,13 @@ function UploadPopover({
         ['--radix-popper-transform-origin' as string]: '50% 0px',
       }}
     >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={handleFileChange}
+      />
       <div
         className="chat-upload-popover py-upload-popover-content"
         data-state={visible ? "open" : "closed"}
@@ -914,7 +936,11 @@ function UploadPopover({
           <ImagePlus size={16} strokeWidth={2} className="h-4 w-4" />
           Select Asset
         </button>
-        <button type="button" onClick={onClose} className="chat-upload-popover-action chat-upload-popover-action-primary">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="chat-upload-popover-action chat-upload-popover-action-primary"
+        >
           <Plus size={16} strokeWidth={2} className="h-4 w-4" />
           Upload
         </button>
@@ -1157,6 +1183,16 @@ function RequestTextField({ id, label, value }: { id: string; label: string; val
 }
 
 function RequestImageField({ id, label }: { id: string; label: string }) {
+  const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
+  const [assetModalOpen, setAssetModalOpen] = useState(false);
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const handleUpload = useCallback((file: File) => {
+    const url = URL.createObjectURL(file);
+    setUploadedUrl(url);
+  }, []);
+
   return (
     <div className="relative w-full">
       <div className="w-full min-w-0">
@@ -1164,14 +1200,51 @@ function RequestImageField({ id, label }: { id: string; label: string }) {
         <div className="w-full min-w-0">
           <div className="min-w-0">
             <div className="relative">
-              <button type="button" title="Upload image" className="flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700">
-                <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-                <span className="capitalize">Upload image</span>
-              </button>
+              {uploadedUrl ? (
+                <div className="relative">
+                  <img src={uploadedUrl} alt="Uploaded preview" className="h-32 w-full rounded-lg border border-gray-200 object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      URL.revokeObjectURL(uploadedUrl);
+                      setUploadedUrl(null);
+                    }}
+                    className="nodrag absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                  >
+                    <X size={12} strokeWidth={2} className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : (
+                <HoverTooltip text="Upload image" side="top" triggerClassName="block">
+                  <button
+                    ref={uploadButtonRef}
+                    type="button"
+                    tabIndex={-1}
+                    aria-label="Upload image"
+                    onClick={() => setUploadPopoverOpen((open) => !open)}
+                    data-state={uploadPopoverOpen ? "open" : "closed"}
+                    className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
+                  >
+                    <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+                    <span className="capitalize">Upload image</span>
+                  </button>
+                </HoverTooltip>
+              )}
             </div>
           </div>
         </div>
       </div>
+      {!uploadedUrl && (
+        <UploadPopover
+          open={uploadPopoverOpen}
+          anchorRef={uploadButtonRef}
+          onClose={() => setUploadPopoverOpen(false)}
+          onSelectAsset={() => setAssetModalOpen(true)}
+          onUpload={handleUpload}
+          accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+        />
+      )}
+      <MediaLibraryModal open={assetModalOpen} onClose={() => setAssetModalOpen(false)} />
       <SourceFieldHandle id={id} color="#3b82f6" top={31} />
     </div>
   );
@@ -1318,12 +1391,12 @@ function RequestInputsNode() {
 function ResponseOutputCard({ label }: { label: string }) {
   return (
     <div className="space-y-2 rounded-lg bg-[#F5F5F5] p-3">
-      <div className="flex h-[22px] items-center gap-1.5">
-        <span className="min-w-0 flex-1 truncate text-sm leading-5 text-gray-900">{label}</span>
+      <div className="flex items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate text-sm leading-5 text-gray-900" title={label}>{label}</span>
         <button type="button" title="Rename" className="nodrag flex-shrink-0 rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600">
           <Pencil size={12} strokeWidth={2} className="h-3 w-3" />
         </button>
-        <button type="button" title="Delete" className="nodrag flex-shrink-0 rounded p-1 text-gray-400 hover:bg-red-100 hover:text-red-500">
+        <button type="button" title="Disconnect" className="nodrag flex-shrink-0 rounded p-1 text-gray-400 hover:bg-red-100 hover:text-red-500">
           <Trash2 size={14} strokeWidth={2} className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -1335,6 +1408,12 @@ function ResponseOutputCard({ label }: { label: string }) {
 }
 
 function ResponseNode() {
+  const edges = useEdges();
+  const allEdges = edges.filter((e) => e.target === "response" && e.targetHandle === "result");
+  const cards = allEdges.length > 0
+    ? allEdges.map((e) => ({ key: e.id, label: e.sourceHandle ?? e.source }))
+    : [{ key: "default", label: "final_result" }];
+
   return (
     <div className="w-[380px] rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">
       <div className="flex h-[57px] items-center gap-3 border-b border-gray-100 px-4 py-3">
@@ -1351,7 +1430,9 @@ function ResponseNode() {
         </div>
         <div className="border-t border-gray-100" />
         <div className="space-y-3">
-          <ResponseOutputCard label="final_result" />
+          {cards.map((card) => (
+            <ResponseOutputCard key={card.key} label={card.label} />
+          ))}
         </div>
       </div>
     </div>
@@ -1866,7 +1947,21 @@ function GeminiUpload({
 }) {
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; url: string; file: File }[]>([]);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const handleUpload = useCallback((file: File) => {
+    const url = URL.createObjectURL(file);
+    setUploadedFiles((prev) => [...prev, { name: file.name, url, file }]);
+  }, []);
+
+  const removeFile = useCallback((index: number) => {
+    setUploadedFiles((prev) => {
+      const f = prev[index];
+      if (f) URL.revokeObjectURL(f.url);
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
 
   return (
     <div className="relative">
@@ -1876,6 +1971,22 @@ function GeminiUpload({
           {label}
         </div>
         <div className="min-w-0 flex-1">
+          {uploadedFiles.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {uploadedFiles.map((f, i) => (
+                <div key={i} className="group relative">
+                  <img src={f.url} alt={f.name} className="h-16 w-16 rounded-lg border border-gray-200 object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removeFile(i)}
+                    className="nodrag absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                  >
+                    <X size={10} strokeWidth={2} className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <HoverTooltip text={`Upload ${buttonText.replace(/^Upload\s+/i, "").toLowerCase()}`} side="top" triggerClassName="block">
             <button
               ref={uploadButtonRef}
@@ -1895,6 +2006,7 @@ function GeminiUpload({
             anchorRef={uploadButtonRef}
             onClose={() => setUploadPopoverOpen(false)}
             onSelectAsset={() => setAssetModalOpen(true)}
+            onUpload={handleUpload}
           />
           <MediaLibraryModal open={assetModalOpen} onClose={() => setAssetModalOpen(false)} />
           {showRequirements && (
