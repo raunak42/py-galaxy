@@ -6,6 +6,7 @@ import {
   ReactFlowProvider,
   Background,
   BackgroundVariant,
+  MiniMap,
   useNodesState,
   useEdgesState,
   addEdge,
@@ -25,6 +26,11 @@ import { IconAdjustmentsHorizontal, IconArrowsSplit, IconCloudUpload, IconLayout
 import {
   Plus,
   Search,
+  GripVertical,
+  Pencil,
+  Copy,
+  Trash2,
+  FileOutput,
   X,
   StickyNote,
   Layers,
@@ -44,6 +50,7 @@ import {
   Wallet,
   Clock,
   Map,
+  Minimize2,
   ArrowLeft,
   PanelLeftOpen,
   PanelLeftClose,
@@ -79,7 +86,24 @@ const MAX_ZOOM = 2;
 const SIDEBAR_COLLAPSED_WIDTH = 52; // measured
 const SIDEBAR_EXPANDED_WIDTH = 296;
 
-const initialNodes: Node[] = [];
+const PERMANENT_NODE_IDS = new Set(["request-inputs", "response"]);
+
+const initialNodes: Node[] = [
+  {
+    id: "request-inputs",
+    type: "request",
+    position: { x: 96, y: 96 },
+    deletable: false,
+    data: {},
+  },
+  {
+    id: "response",
+    type: "response",
+    position: { x: 960, y: 96 },
+    deletable: false,
+    data: {},
+  },
+];
 
 const initialEdges: Edge[] = [];
 
@@ -105,6 +129,43 @@ function FieldHandle({
         style={{
           position: "relative",
           left: "auto",
+          top: "auto",
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          background: color,
+          borderColor: `${color}80`,
+          boxShadow: `${color}50 0px 0px 8px`,
+          cursor: "crosshair",
+          ['--handle-color' as string]: color,
+        }}
+      />
+    </div>
+  );
+}
+
+function SourceFieldHandle({
+  id,
+  color = "#f59e0b",
+  top = 31,
+}: {
+  id: string;
+  color?: string;
+  top?: number;
+}) {
+  return (
+    <div
+      className="absolute right-[-23px] z-50 flex h-3.5 w-3.5 -translate-y-1/2 items-center"
+      style={{ top }}
+    >
+      <Handle
+        id={id}
+        type="source"
+        position={Position.Right}
+        className="!relative !right-auto !top-auto !translate-x-0 !translate-y-0 !rounded-full !border-2"
+        style={{
+          position: "relative",
+          right: "auto",
           top: "auto",
           width: 14,
           height: 14,
@@ -1013,6 +1074,143 @@ function LiveNodeShell({ children }: { children: ReactNode }) {
   return <div className="w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">{children}</div>;
 }
 
+function RequestFieldHeader({ label, canDelete = true }: { label: string; canDelete?: boolean }) {
+  return (
+    <div className="mb-2 flex w-full min-w-0 items-center gap-2">
+      <div className="nodrag nopan shrink-0 cursor-grab text-gray-400 hover:text-gray-600 active:cursor-grabbing">
+        <GripVertical size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+      </div>
+      <span className="group/label flex min-w-0 flex-1 items-center gap-1 text-xs font-medium leading-4 text-gray-900 hover:text-[#6366f1]">
+        <span className="truncate">{label}</span>
+        <Pencil size={12} strokeWidth={2} className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover/label:opacity-100" />
+        <span className="shrink-0 text-gray-400">
+          <Info size={12} strokeWidth={2} className="h-3 w-3 cursor-help" />
+        </span>
+      </span>
+      <div className="ml-auto flex items-center gap-1">
+        <button type="button" title="Copy value" className="nodrag rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+          <Copy size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+        </button>
+        <button type="button" title="Delete" disabled={!canDelete} className="nodrag rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500 disabled:opacity-50">
+          <Trash2 size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RequestTextField({ id, label, value }: { id: string; label: string; value: string }) {
+  return (
+    <div className="relative w-full">
+      <div className="w-full min-w-0">
+        <RequestFieldHeader label={label} />
+        <div className="w-full min-w-0">
+          <div className="relative">
+            <textarea
+              readOnly
+              value={value}
+              rows={3}
+              className="nodrag nowheel h-[78px] w-full min-w-0 resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm leading-5 text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
+            />
+            <button type="button" title="Expand" className="nodrag absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-gray-200/80 text-gray-500 transition-colors hover:bg-gray-300 hover:text-gray-700">
+              <Maximize2 size={12} strokeWidth={2} className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      </div>
+      <SourceFieldHandle id={id} color="#f59e0b" top={31} />
+    </div>
+  );
+}
+
+function RequestImageField({ id, label }: { id: string; label: string }) {
+  return (
+    <div className="relative w-full">
+      <div className="w-full min-w-0">
+        <RequestFieldHeader label={label} />
+        <div className="w-full min-w-0">
+          <div className="min-w-0">
+            <div className="relative">
+              <button type="button" title="Upload image" className="flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700">
+                <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+                <span className="capitalize">Upload image</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <SourceFieldHandle id={id} color="#3b82f6" top={31} />
+    </div>
+  );
+}
+
+function RequestInputsNode() {
+  return (
+    <div className="w-[380px] rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl">
+      <div className="flex h-[57px] items-center justify-between border-b border-gray-100 px-4 py-3">
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-medium leading-5 text-gray-900">Request-Inputs</span>
+          <InfoTooltip text="Define the input fields for your workflow. These become the request parameters when running via Playground or API." size={14} className="" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button type="button" title="Add input" className="nodrag flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+            <Plus size={16} strokeWidth={2} className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="relative w-full px-4 py-4">
+        <div className="w-full space-y-4">
+          <RequestTextField id="text_field" label="text_field" value="Product: Wireless Bluetooth Headphones. Features: Noise cancellation, 30-hour battery, foldable design." />
+          <RequestImageField id="image_field" label="image_field" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResponseOutputCard({ label }: { label: string }) {
+  return (
+    <div className="space-y-2 rounded-lg bg-[#F5F5F5] p-3">
+      <div className="flex h-[22px] items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate text-sm leading-5 text-gray-900">{label}</span>
+        <button type="button" title="Rename" className="nodrag flex-shrink-0 rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600">
+          <Pencil size={12} strokeWidth={2} className="h-3 w-3" />
+        </button>
+        <button type="button" title="Delete" className="nodrag flex-shrink-0 rounded p-1 text-gray-400 hover:bg-red-100 hover:text-red-500">
+          <Trash2 size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="flex h-10 items-center justify-center rounded border border-gray-200 bg-white">
+        <span className="text-xs leading-4 text-gray-400">No output yet</span>
+      </div>
+    </div>
+  );
+}
+
+function ResponseNode() {
+  return (
+    <div className="w-[380px] rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">
+      <div className="flex h-[57px] items-center gap-3 border-b border-gray-100 px-4 py-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#6366f1]/10 text-[#6366f1]">
+          <FileOutput size={16} strokeWidth={2} className="h-4 w-4" />
+        </div>
+        <span className="text-sm font-semibold leading-5 text-gray-900">Response</span>
+        <InfoTooltip text="Connect node outputs here to define what your workflow returns. These values appear as results in Playground and API responses." size={14} className="" />
+      </div>
+      <div className="space-y-3 p-4">
+        <div className="relative h-6">
+          <FieldHandle id="result" color="#6366f1" top={12} />
+          <span className="text-xs leading-4 text-gray-500">result</span>
+        </div>
+        <div className="border-t border-gray-100" />
+        <div className="space-y-3">
+          <ResponseOutputCard label="final_result" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CropImageNode() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1752,7 +1950,13 @@ function GeminiSettingTextarea({
   );
 }
 
-const nodeTypes = { geminiPreview: GeminiPreviewNode, cropImage: CropImageNode, stickyNote: StickyNoteNode };
+const nodeTypes = {
+  request: RequestInputsNode,
+  response: ResponseNode,
+  geminiPreview: GeminiPreviewNode,
+  cropImage: CropImageNode,
+  stickyNote: StickyNoteNode,
+};
 
 const quickActions = [
   { icon: Plus, label: "New task", shortcut: "CtrlShift+O" },
@@ -2119,7 +2323,8 @@ function NodePicker({
   onAddStickyNote: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [activeGroup, setActiveGroup] = useState<PickerGroup>(pickerGroups[0]);
+  const [activeGroup, setActiveGroup] = useState<PickerGroup | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const visibleGroups = pickerGroups
     .map((group) => {
@@ -2136,10 +2341,10 @@ function NodePicker({
     })
     .filter((group) => !normalizedQuery || group.items.length > 0);
   const displayedGroup = normalizedQuery
-    ? visibleGroups.find((group) => group.label === activeGroup.label) ??
+    ? visibleGroups.find((group) => group.label === activeGroup?.label) ??
       visibleGroups[0]
     : activeGroup;
-  const activeItems = displayedGroup?.items ?? [];
+  const activeItems = (displayedGroup?.items ?? []).filter((item) => item.label !== "Sticky Note");
   const searchResults = visibleGroups.flatMap((group) =>
     group.items.map((item) => ({ ...item, groupLabel: group.label }))
   );
@@ -2153,6 +2358,7 @@ function NodePicker({
 
   useLayoutEffect(() => {
     updatePosition();
+    requestAnimationFrame(() => searchInputRef.current?.focus());
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
     return () => {
@@ -2168,7 +2374,7 @@ function NodePicker({
       className="fixed z-[10000]"
       style={{ left: position.x, top: position.y }}
     >
-      <div className="relative h-[430px] w-[529px]">
+      <div className="relative h-[430px] w-[529px]" onMouseLeave={() => setActiveGroup(null)}>
         <div className="h-[430px] w-[280px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl backdrop-blur">
           <div className="p-2.5">
             <div className="flex items-center gap-2">
@@ -2179,22 +2385,22 @@ function NodePicker({
                   className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
                 />
                 <input
+                  ref={searchInputRef}
+                  autoFocus
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search nodes or models..."
                   className="h-[38px] w-full rounded-xl border border-transparent bg-transparent py-2 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-transparent focus:outline-none focus:ring-0"
                 />
               </div>
-              <HoverTooltip text="Close" side="top" triggerClassName="inline-flex shrink-0">
-                <button
-                  type="button"
-                  aria-label="Close"
-                  onClick={onClose}
-                  className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-                >
-                  <X size={16} strokeWidth={2} className="h-4 w-4" />
-                </button>
-              </HoverTooltip>
+              <button
+                type="button"
+                title="Close"
+                onClick={onClose}
+                className="shrink-0 rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+              >
+                <X size={16} strokeWidth={2} className="h-4 w-4" />
+              </button>
             </div>
           </div>
 
@@ -2263,7 +2469,7 @@ function NodePicker({
           </div>
         </div>
 
-        {!normalizedQuery && (
+        {!normalizedQuery && displayedGroup && (
           <div className="absolute left-[286px] top-0 h-[430px] w-[237px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl backdrop-blur">
             <div className="p-2.5">
               <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase leading-[16.5px] tracking-wide text-gray-500">
@@ -2384,18 +2590,40 @@ function TopRightCanvasControls() {
 }
 
 function BottomRightCanvasControls() {
+  const [minimapOpen, setMinimapOpen] = useState(true);
+  const minimapButtonTitle = minimapOpen ? "Hide minimap" : "Show minimap";
+
   return (
-    <div className="absolute z-20" style={{ bottom: 16, right: 75 }}>
-      <HoverTooltip text="Show minimap" side="top" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex" className="whitespace-nowrap">
-        <button
-          type="button"
-          aria-label="Show minimap"
-          className="rounded-lg border border-gray-200 bg-white p-1.5 text-gray-500 shadow-sm transition-colors hover:bg-gray-100"
-        >
-          <Map size={16} strokeWidth={2} className="h-4 w-4" />
-        </button>
-      </HoverTooltip>
-    </div>
+    <>
+      {minimapOpen && (
+        <MiniMap
+          className="!bottom-14 !right-4 !h-[152px] !w-[202px] !rounded-lg !border !border-gray-200 !bg-white dark:!border-zinc-700 dark:!bg-zinc-900 sm:!bottom-4"
+          nodeColor={(node) => {
+            if (node.type === "geminiPreview") return "rgb(59, 130, 246)";
+            if (node.type === "cropImage") return "rgb(249, 115, 22)";
+            return "rgb(68, 68, 68)";
+          }}
+          nodeStrokeWidth={0}
+          nodeBorderRadius={5}
+          maskColor="rgba(0, 0, 0, 0.8)"
+          pannable
+          zoomable
+        />
+      )}
+      <button
+        type="button"
+        title={minimapButtonTitle}
+        onClick={() => setMinimapOpen((open) => !open)}
+        className="absolute rounded-lg border border-gray-200 bg-white p-1.5 text-gray-500 shadow-sm transition-colors hover:bg-gray-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        style={minimapOpen ? { bottom: 172, right: 16, zIndex: 20 } : { bottom: 16, right: 75, zIndex: 20 }}
+      >
+        {minimapOpen ? (
+          <Minimize2 size={14} strokeWidth={2} className="lucide lucide-minimize2 lucide-minimize-2 h-3.5 w-3.5" />
+        ) : (
+          <Map size={16} strokeWidth={2} className="lucide lucide-map h-4 w-4" />
+        )}
+      </button>
+    </>
   );
 }
 
@@ -2485,8 +2713,19 @@ function Divider() {
 export default function WorkflowCanvasPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [nodes, setNodes, onNodesChangeBase] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  const onNodesChange = useCallback(
+    (changes: Parameters<typeof onNodesChangeBase>[0]) => {
+      onNodesChangeBase(
+        changes.filter(
+          (change) => change.type !== "remove" || !PERMANENT_NODE_IDS.has(change.id),
+        ),
+      );
+    },
+    [onNodesChangeBase],
+  );
 
   const onConnect = useCallback(
     (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
