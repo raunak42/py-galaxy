@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   BackgroundVariant,
   useNodesState,
@@ -121,25 +122,34 @@ function FieldHandle({
 
 function AddToRequestButton({ className = "" }: { className?: string }) {
   return (
-    <button
-      type="button"
-      className={`nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
-    >
-      <Plus size={16} strokeWidth={2} className="h-4 w-4" />
-    </button>
+    <HoverTooltip text="Add to request" side="top" triggerClassName={`inline-flex shrink-0 ${className}`}>
+      <button
+        type="button"
+        aria-label="Add to request"
+        className="nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Plus size={16} strokeWidth={2} className="h-4 w-4" />
+      </button>
+    </HoverTooltip>
   );
 }
 
 function HoverTooltip({
   text,
+  shortcut,
   children,
   side = "bottom",
+  variant = "light",
+  scaleWithZoom = true,
   className = "",
   triggerClassName = "",
 }: {
   text: string;
+  shortcut?: string;
   children: ReactNode;
-  side?: "top" | "bottom";
+  side?: "top" | "bottom" | "left" | "right";
+  variant?: "light" | "dark";
+  scaleWithZoom?: boolean;
   className?: string;
   triggerClassName?: string;
 }) {
@@ -155,13 +165,33 @@ function HoverTooltip({
   const updatePosition = useCallback(() => {
     const rect = triggerRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const effectiveZoom = scaleWithZoom ? zoom : 1;
     const contentWidth = contentRef.current?.offsetWidth ?? 0;
     const contentHeight = contentRef.current?.offsetHeight ?? 0;
+    const gap = 8 * effectiveZoom;
+    const viewportPadding = 8;
+    const clampX = (x: number) => {
+      const scaledWidth = contentWidth * effectiveZoom;
+      if (!scaledWidth) return x;
+      return Math.min(Math.max(x, viewportPadding), window.innerWidth - scaledWidth - viewportPadding);
+    };
+    const clampY = (y: number) => {
+      const scaledHeight = contentHeight * effectiveZoom;
+      if (!scaledHeight) return y;
+      return Math.min(Math.max(y, viewportPadding), window.innerHeight - scaledHeight - viewportPadding);
+    };
+    if (side === "left" || side === "right") {
+      setPosition({
+        x: clampX(side === "left" ? rect.left - contentWidth * effectiveZoom - gap : rect.right + gap),
+        y: clampY(rect.top + rect.height / 2 - (contentHeight * effectiveZoom) / 2),
+      });
+      return;
+    }
     setPosition({
-      x: rect.left + rect.width / 2 - (contentWidth * zoom) / 2,
-      y: side === "top" ? rect.top - (contentHeight + 8) * zoom : rect.bottom + 8 * zoom,
+      x: clampX(rect.left + rect.width / 2 - (contentWidth * effectiveZoom) / 2),
+      y: clampY(side === "top" ? rect.top - contentHeight * effectiveZoom - gap : rect.bottom + gap),
     });
-  }, [side, zoom]);
+  }, [scaleWithZoom, side, zoom]);
 
   const showTooltip = useCallback(() => {
     if (closeTimerRef.current) {
@@ -198,6 +228,12 @@ function HoverTooltip({
     };
   }, []);
 
+  const visualClass =
+    variant === "dark"
+      ? "flex items-center gap-1.5 rounded-lg border-0 bg-gray-900 px-2.5 py-1.5 text-xs font-medium leading-4 text-white shadow-lg"
+      : "rounded-[18px] border border-[#e5e5e5] bg-[#f6f6f4] px-3 py-1.5 text-xs font-normal leading-4 text-[#1b1b18] shadow-md";
+  const accessibleText = shortcut ? `${text} ${shortcut}` : text;
+
   return (
     <>
       <span
@@ -222,12 +258,12 @@ function HoverTooltip({
               position: "fixed",
               left: 0,
               top: 0,
-              transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+              transform: `translate(${position.x}px, ${position.y}px) scale(${scaleWithZoom ? zoom : 1})`,
               transformOrigin: "top left",
               minWidth: "max-content",
               willChange: "transform",
               zIndex: 100,
-              ['--radix-popper-transform-origin' as string]: side === "top" ? '50% 100%' : '50% 0px',
+              ['--radix-popper-transform-origin' as string]: side === "top" ? '50% 100%' : side === "bottom" ? '50% 0px' : side === "left" ? '100% 50%' : '0px 50%',
             }}
           >
             <div
@@ -235,7 +271,7 @@ function HoverTooltip({
               data-side={side}
               data-align="center"
               data-state={open ? "instant-open" : "closed"}
-              className={`py-tooltip-content rounded-[18px] border bg-popover px-3 py-1.5 text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-[100] text-[11px] font-normal leading-relaxed ${className}`}
+              className={`py-tooltip-content z-[100] overflow-hidden animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 ${visualClass} ${className}`}
               style={{
                 ['--radix-tooltip-content-transform-origin' as string]: 'var(--radix-popper-transform-origin)',
                 ['--radix-tooltip-content-available-width' as string]: 'var(--radix-popper-available-width)',
@@ -245,7 +281,8 @@ function HoverTooltip({
                 animationFillMode: open ? undefined : 'forwards',
               }}
             >
-              {text}
+              <span>{text}</span>
+              {shortcut ? <kbd className="ml-1 text-[10px] text-[#858589]">{shortcut}</kbd> : null}
               <span
                 id={tooltipId}
                 role="tooltip"
@@ -262,7 +299,7 @@ function HoverTooltip({
                   overflowWrap: 'normal',
                 }}
               >
-                {text}
+                {accessibleText}
               </span>
             </div>
           </div>,
@@ -290,9 +327,11 @@ function InfoTooltip({
 
 function ResetSettingButton() {
   return (
-    <button className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:opacity-50">
-      <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
-    </button>
+    <HoverTooltip text="Reset" side="top" triggerClassName="inline-flex shrink-0">
+      <button aria-label="Reset" className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:opacity-50">
+        <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+      </button>
+    </HoverTooltip>
   );
 }
 
@@ -531,22 +570,27 @@ function MediaLibraryModal({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 rounded-xl bg-[#f5f5f5] p-2 md:hidden">
-                <button aria-pressed="false" title="Grid view" aria-label="Grid view" className="flex h-5 w-5 items-center justify-center text-[#858589] transition-colors hover:text-[#3d3d41]">
-                  <IconLayoutGridFilled size={20} className="h-5 w-5" />
-                </button>
+                <HoverTooltip text="Grid view" side="top" triggerClassName="inline-flex">
+                  <button aria-pressed="false" aria-label="Grid view" className="flex h-5 w-5 items-center justify-center text-[#858589] transition-colors hover:text-[#3d3d41]">
+                    <IconLayoutGridFilled size={20} className="h-5 w-5" />
+                  </button>
+                </HoverTooltip>
                 <span aria-hidden="true" className="h-5 w-px bg-[#e5e5e5]" />
-                <button aria-pressed="true" title="List view" aria-label="List view" className="flex h-5 w-5 items-center justify-center text-[#3d3d41] transition-colors">
-                  <IconLayoutList size={20} stroke={2} className="h-5 w-5" />
-                </button>
+                <HoverTooltip text="List view" side="top" triggerClassName="inline-flex">
+                  <button aria-pressed="true" aria-label="List view" className="flex h-5 w-5 items-center justify-center text-[#3d3d41] transition-colors">
+                    <IconLayoutList size={20} stroke={2} className="h-5 w-5" />
+                  </button>
+                </HoverTooltip>
               </div>
-              <button
-                aria-label="Close media library"
-                title="Close"
-                onClick={onClose}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[#858589] transition-colors hover:bg-[#f5f5f5] hover:text-[#3d3d41]"
-              >
-                <X size={16} strokeWidth={2} className="h-4 w-4" />
-              </button>
+              <HoverTooltip text="Close" side="top" triggerClassName="inline-flex">
+                <button
+                  aria-label="Close media library"
+                  onClick={onClose}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[#858589] transition-colors hover:bg-[#f5f5f5] hover:text-[#3d3d41]"
+                >
+                  <X size={16} strokeWidth={2} className="h-4 w-4" />
+                </button>
+              </HoverTooltip>
             </div>
           </div>
 
@@ -559,21 +603,23 @@ function MediaLibraryModal({ open, onClose }: { open: boolean; onClose: () => vo
                 className="min-w-0 flex-1 bg-transparent text-[13px] text-[#3d3d41] outline-none placeholder:text-[#858589] md:text-[14px]"
               />
             </div>
-            <button
-              title="Refresh library"
-              aria-label="Refresh media library"
-              className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-lg bg-[#f5f5f5] text-[#858589] transition-colors hover:bg-[#f0f0f0] hover:text-[#3d3d41] md:h-12 md:w-12"
-            >
-              <RefreshCw size={20} strokeWidth={2} className="h-5 w-5" />
-            </button>
-            <button
-              title="Upload images, videos, audio, or documents to your library"
-              aria-label="Upload files to media library"
-              className="flex h-[42px] w-[42px] shrink-0 items-center justify-center gap-2 rounded-xl bg-[#4f46e6] px-0 text-[14px] font-semibold leading-5 text-white shadow-sm transition-colors hover:bg-[#4338ca] md:h-12 md:w-[172px]"
-            >
-              <IconCloudUpload size={20} stroke={2} className="h-5 w-5 shrink-0" />
-              <span className="hidden md:inline">Upload Media</span>
-            </button>
+            <HoverTooltip text="Refresh library" side="top" triggerClassName="inline-flex shrink-0">
+              <button
+                aria-label="Refresh media library"
+                className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-lg bg-[#f5f5f5] text-[#858589] transition-colors hover:bg-[#f0f0f0] hover:text-[#3d3d41] md:h-12 md:w-12"
+              >
+                <RefreshCw size={20} strokeWidth={2} className="h-5 w-5" />
+              </button>
+            </HoverTooltip>
+            <HoverTooltip text="Upload images, videos, audio, or documents to your library" side="top" triggerClassName="inline-flex shrink-0">
+              <button
+                aria-label="Upload files to media library"
+                className="flex h-[42px] w-[42px] shrink-0 items-center justify-center gap-2 rounded-xl bg-[#4f46e6] px-0 text-[14px] font-semibold leading-5 text-white shadow-sm transition-colors hover:bg-[#4338ca] md:h-12 md:w-[172px]"
+              >
+                <IconCloudUpload size={20} stroke={2} className="h-5 w-5 shrink-0" />
+                <span className="hidden md:inline">Upload Media</span>
+              </button>
+            </HoverTooltip>
           </div>
         </div>
 
@@ -583,19 +629,19 @@ function MediaLibraryModal({ open, onClose }: { open: boolean; onClose: () => vo
               <div className="flex min-w-0 flex-1 flex-col gap-2">
                 <p className="text-[14px] font-semibold leading-5 text-[#1b1b18]">Your Media</p>
                 <div className="flex gap-1.5 overflow-x-auto md:gap-3">
-                  <button title="Show all assets" aria-pressed="true" className="flex items-center gap-1.5 rounded-full bg-[#dcdafa] px-2.5 py-1.5 text-[13px] font-normal leading-5 text-[#4f46e6] transition-colors md:gap-2 md:px-3 md:py-2 md:text-[14px]">
+                  <button aria-label="Show all assets" aria-pressed="true" className="flex items-center gap-1.5 rounded-full bg-[#dcdafa] px-2.5 py-1.5 text-[13px] font-normal leading-5 text-[#4f46e6] transition-colors md:gap-2 md:px-3 md:py-2 md:text-[14px]">
                     <IconLayout size={20} stroke={2} className="h-4 w-4 shrink-0 md:h-5 md:w-5" />
                     <span className="whitespace-nowrap leading-5">All</span>
                   </button>
-                  <button title="AI-generated content from your chats and workflows" aria-pressed="false" className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-normal leading-5 text-[#1b1b18] transition-colors hover:bg-black/5 md:gap-2 md:px-3 md:py-2 md:text-[14px]">
+                  <button aria-label="AI-generated content from your chats and workflows" aria-pressed="false" className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-normal leading-5 text-[#1b1b18] transition-colors hover:bg-black/5 md:gap-2 md:px-3 md:py-2 md:text-[14px]">
                     <Sparkles size={20} strokeWidth={2} className="lucide lucide-sparkles h-4 w-4 shrink-0 md:h-5 md:w-5" />
                     <span className="whitespace-nowrap leading-5">Generated</span>
                   </button>
-                  <button title="Files you uploaded directly" aria-pressed="false" className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-normal leading-5 text-[#1b1b18] transition-colors hover:bg-black/5 md:gap-2 md:px-3 md:py-2 md:text-[14px]">
+                  <button aria-label="Files you uploaded directly" aria-pressed="false" className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-normal leading-5 text-[#1b1b18] transition-colors hover:bg-black/5 md:gap-2 md:px-3 md:py-2 md:text-[14px]">
                     <CloudUpload size={20} strokeWidth={2} className="h-4 w-4 shrink-0 md:h-5 md:w-5" />
                     <span className="whitespace-nowrap leading-5">My Uploads</span>
                   </button>
-                  <button title="Items you marked as favorite" aria-pressed="false" className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-normal leading-5 text-[#1b1b18] transition-colors hover:bg-black/5 md:gap-2 md:px-3 md:py-2 md:text-[14px]">
+                  <button aria-label="Items you marked as favorite" aria-pressed="false" className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-normal leading-5 text-[#1b1b18] transition-colors hover:bg-black/5 md:gap-2 md:px-3 md:py-2 md:text-[14px]">
                     <Heart size={20} strokeWidth={2} className="h-4 w-4 shrink-0 md:h-5 md:w-5" />
                     <span className="whitespace-nowrap leading-5">Favorites</span>
                   </button>
@@ -637,13 +683,17 @@ function MediaLibraryModal({ open, onClose }: { open: boolean; onClose: () => vo
                   <span className="h-[7px] w-[7px] shrink-0 rounded-full bg-[#0b62f1]" />
                 </button>
                 <div className="order-3 hidden items-center gap-2 rounded-xl bg-[#f5f5f5]/30 p-2 md:flex">
-                  <button aria-pressed="false" title="Grid view" aria-label="Grid view" className="flex h-5 w-5 items-center justify-center text-[#737373] transition-colors hover:text-[#1b1b18]">
-                    <IconLayoutGridFilled size={20} className="h-5 w-5" />
-                  </button>
+                  <HoverTooltip text="Grid view" side="top" triggerClassName="inline-flex">
+                    <button aria-pressed="false" aria-label="Grid view" className="flex h-5 w-5 items-center justify-center text-[#737373] transition-colors hover:text-[#1b1b18]">
+                      <IconLayoutGridFilled size={20} className="h-5 w-5" />
+                    </button>
+                  </HoverTooltip>
                   <span aria-hidden="true" className="h-5 w-px bg-[#e5e5e5]" />
-                  <button aria-pressed="true" title="List view" aria-label="List view" className="flex h-5 w-5 items-center justify-center text-[#1b1b18] transition-colors">
-                    <IconLayoutList size={20} stroke={2} className="h-5 w-5" />
-                  </button>
+                  <HoverTooltip text="List view" side="top" triggerClassName="inline-flex">
+                    <button aria-pressed="true" aria-label="List view" className="flex h-5 w-5 items-center justify-center text-[#1b1b18] transition-colors">
+                      <IconLayoutList size={20} stroke={2} className="h-5 w-5" />
+                    </button>
+                  </HoverTooltip>
                 </div>
                 <button type="button" className="order-3 ml-auto flex items-center gap-2 rounded-lg bg-[#f5f5f5] p-2 text-[14px] font-normal leading-5 text-[#858589] outline-none transition-colors hover:bg-[#f0f0f0] md:hidden">
                   <IconLayoutGridFilled size={20} className="h-5 w-5 shrink-0" />
@@ -661,7 +711,7 @@ function MediaLibraryModal({ open, onClose }: { open: boolean; onClose: () => vo
                   <p className="text-sm font-medium text-[#1b1b18]">No images found</p>
                   <p className="mt-1 text-xs text-[#737373]">Upload files above, or generate content in chat</p>
                 </div>
-                <button title="Upload images, videos, audio, or documents" className="mt-1 flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] px-3 py-2 text-sm text-[#737373] transition-colors hover:bg-black/5 hover:text-[#1b1b18]">
+                <button aria-label="Upload images, videos, audio, or documents" className="mt-1 flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] px-3 py-2 text-sm text-[#737373] transition-colors hover:bg-black/5 hover:text-[#1b1b18]">
                   <CloudUpload size={16} strokeWidth={2} className="h-4 w-4" />
                   Upload files
                 </button>
@@ -945,6 +995,7 @@ function LiveNodeHeader({
         <button
           ref={menuButtonRef}
           type="button"
+          aria-label="More options"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           data-state={menuOpen ? "open" : "closed"}
@@ -1152,71 +1203,79 @@ function StickyNoteToolbar({
     <div className="flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-1.5 shadow-lg">
       <div className="flex flex-col gap-1">
         {STICKY_COLORS.map(({ name, color: c }) => (
-          <button
-            key={name}
-            title={name}
-            onClick={() => onColorChange(c)}
-            className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${c === color ? "scale-110" : ""}`}
-            style={{ backgroundColor: c, borderColor: c === color ? "#000" : "transparent" }}
-          />
+          <HoverTooltip key={name} text={name} side="right" triggerClassName="inline-flex">
+            <button
+              aria-label={name}
+              onClick={() => onColorChange(c)}
+              className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${c === color ? "scale-110" : ""}`}
+              style={{ backgroundColor: c, borderColor: c === color ? "#000" : "transparent" }}
+            />
+          </HoverTooltip>
         ))}
       </div>
 
       <div className="mx-0.5 h-px bg-[#e5e7eb]" />
 
-      <button
-        title={bold ? "Remove bold" : "Bold"}
-        onClick={() => onBoldChange(!bold)}
-        className={`flex h-6 w-6 items-center justify-center rounded-md text-xs transition-colors ${
-          bold
-            ? "bg-gray-800 text-white"
-            : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
-        }`}
-      >
-        <span className="font-bold">B</span>
-      </button>
+      <HoverTooltip text={bold ? "Remove bold" : "Bold"} side="right" triggerClassName="inline-flex">
+        <button
+          aria-label={bold ? "Remove bold" : "Bold"}
+          onClick={() => onBoldChange(!bold)}
+          className={`flex h-6 w-6 items-center justify-center rounded-md text-xs transition-colors ${
+            bold
+              ? "bg-gray-800 text-white"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+          }`}
+        >
+          <span className="font-bold">B</span>
+        </button>
+      </HoverTooltip>
 
       <div className="mx-0.5 h-px bg-[#e5e7eb]" />
 
       <div className="flex flex-col items-center gap-0.5">
-        <button
-          title="Increase font size"
-          onClick={() => onFontSizeChange(Math.min(72, fontSize + 2))}
-          disabled={fontSize >= 72}
-          className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-100 text-xs text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-30"
-        >
-          A+
-        </button>
+        <HoverTooltip text="Increase font size" side="right" triggerClassName="inline-flex">
+          <button
+            aria-label="Increase font size"
+            onClick={() => onFontSizeChange(Math.min(72, fontSize + 2))}
+            disabled={fontSize >= 72}
+            className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-100 text-xs text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            A+
+          </button>
+        </HoverTooltip>
         <span className="select-none text-[9px] leading-none text-gray-500">
           {fontSize}
         </span>
-        <button
-          title="Decrease font size"
-          onClick={() => onFontSizeChange(Math.max(8, fontSize - 2))}
-          disabled={fontSize <= 8}
-          className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-100 text-[10px] text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-30"
-        >
-          A−
-        </button>
+        <HoverTooltip text="Decrease font size" side="right" triggerClassName="inline-flex">
+          <button
+            aria-label="Decrease font size"
+            onClick={() => onFontSizeChange(Math.max(8, fontSize - 2))}
+            disabled={fontSize <= 8}
+            className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-100 text-[10px] text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            A−
+          </button>
+        </HoverTooltip>
       </div>
 
       <div className="mx-0.5 h-px bg-[#e5e7eb]" />
 
       <div className="flex flex-col gap-1">
         {STICKY_FONTS.map(({ name, family }) => (
-          <button
-            key={name}
-            title={name}
-            onClick={() => onFontFamilyChange(family)}
-            className={`flex h-6 w-6 items-center justify-center rounded-md text-[10px] transition-colors ${
-              family === fontFamily
-                ? "bg-gray-800 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
-            }`}
-            style={{ fontFamily: family }}
-          >
-            Aa
-          </button>
+          <HoverTooltip key={name} text={name} side="right" triggerClassName="inline-flex">
+            <button
+              aria-label={name}
+              onClick={() => onFontFamilyChange(family)}
+              className={`flex h-6 w-6 items-center justify-center rounded-md text-[10px] transition-colors ${
+                family === fontFamily
+                  ? "bg-gray-800 text-white"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+              }`}
+              style={{ fontFamily: family }}
+            >
+              Aa
+            </button>
+          </HoverTooltip>
         ))}
       </div>
     </div>
@@ -1232,15 +1291,17 @@ function CropImageUpload({ id, label, required }: { id: string; label: string; r
           {label}{required && <span className="text-red-400">*</span>}
         </div>
         <div className="min-w-0 flex-1">
-          <button
-            type="button"
-            tabIndex={-1}
-            title="Upload image"
-            className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
-          >
-            <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-            <span>Upload Image</span>
-          </button>
+          <HoverTooltip text="Upload image" side="top" triggerClassName="block">
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label="Upload image"
+              className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
+            >
+              <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+              <span>Upload Image</span>
+            </button>
+          </HoverTooltip>
         </div>
         <AddToRequestButton className="mt-1.5" />
       </div>
@@ -1287,13 +1348,16 @@ function CropImageNumber({ id, label, defaultValue }: { id: string; label: strin
             onChange={(event) => update(event.target.value)}
             className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none disabled:opacity-50"
           />
-          <button
-            type="button"
-            onClick={reset}
-            className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:opacity-50"
-          >
-            <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
-          </button>
+          <HoverTooltip text="Reset" side="top" triggerClassName="inline-flex shrink-0">
+            <button
+              type="button"
+              aria-label="Reset"
+              onClick={reset}
+              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:opacity-50"
+            >
+              <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+            </button>
+          </HoverTooltip>
           <AddToRequestButton />
         </div>
       </div>
@@ -1331,6 +1395,7 @@ function GeminiPreviewNode() {
             ref={menuButtonRef}
             type="button"
             id="node-menu-trigger"
+            aria-label="More options"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             data-state={menuOpen ? "open" : "closed"}
@@ -1431,9 +1496,13 @@ function GeminiTextarea({
           placeholder={placeholder}
           className="nodrag nowheel h-[86px] w-full resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] p-3 text-sm leading-5 text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-300"
         />
-        <button type="button" title="Expand" className="nodrag absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-gray-200/80 text-gray-500 transition-colors hover:bg-gray-300 hover:text-gray-700">
-          <Maximize2 size={14} strokeWidth={2} className="h-3.5 w-3.5" />
-        </button>
+        <div className="absolute bottom-2 right-2">
+          <HoverTooltip text="Expand" side="top" triggerClassName="inline-flex">
+            <button type="button" aria-label="Expand" className="nodrag flex h-6 w-6 items-center justify-center rounded-md bg-gray-200/80 text-gray-500 transition-colors hover:bg-gray-300 hover:text-gray-700">
+              <Maximize2 size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+            </button>
+          </HoverTooltip>
+        </div>
       </div>
     </div>
   );
@@ -1462,18 +1531,20 @@ function GeminiUpload({
           {label}
         </div>
         <div className="min-w-0 flex-1">
-          <button
-            ref={uploadButtonRef}
-            type="button"
-            tabIndex={-1}
-            title={`Upload ${buttonText.replace(/^Upload\s+/i, "").toLowerCase()}`}
-            onClick={() => setUploadPopoverOpen((open) => !open)}
-            data-state={uploadPopoverOpen ? "open" : "closed"}
-            className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
-          >
-            <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-            <span className="capitalize">{buttonText}</span>
-          </button>
+          <HoverTooltip text={`Upload ${buttonText.replace(/^Upload\s+/i, "").toLowerCase()}`} side="top" triggerClassName="block">
+            <button
+              ref={uploadButtonRef}
+              type="button"
+              tabIndex={-1}
+              aria-label={`Upload ${buttonText.replace(/^Upload\s+/i, "").toLowerCase()}`}
+              onClick={() => setUploadPopoverOpen((open) => !open)}
+              data-state={uploadPopoverOpen ? "open" : "closed"}
+              className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
+            >
+              <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+              <span className="capitalize">{buttonText}</span>
+            </button>
+          </HoverTooltip>
           <UploadPopover
             open={uploadPopoverOpen}
             anchorRef={uploadButtonRef}
@@ -1744,46 +1815,55 @@ function Sidebar({
         className={`group/sidebar h-full flex-col items-center ${open || isMobileSidebar ? "hidden" : "flex visible"}`}
         style={{ width: SIDEBAR_COLLAPSED_WIDTH }}
       >
-        <button
-          onClick={() => setOpen(true)}
-          className="relative mb-6 mt-2 inline-flex h-9 w-9 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]"
-        >
-          <img
-            src="/favicon.ico"
-            alt="Magica"
-            className="h-5 w-5 object-contain transition-opacity group-hover/sidebar:opacity-0"
-          />
-          <PanelLeftOpen
-            size={20}
-            strokeWidth={2}
-            className="absolute text-[#3d3d41] opacity-0 transition-opacity group-hover/sidebar:opacity-100"
-          />
-        </button>
+        <HoverTooltip text="Open sidebar" shortcut="Ctrl." side="right" triggerClassName="inline-flex mb-6 mt-2">
+          <button
+            aria-label="Open sidebar"
+            onClick={() => setOpen(true)}
+            className="relative inline-flex h-9 w-9 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]"
+          >
+            <img
+              src="/favicon.ico"
+              alt="Magica"
+              className="h-5 w-5 object-contain transition-opacity group-hover/sidebar:opacity-0"
+            />
+            <PanelLeftOpen
+              size={20}
+              strokeWidth={2}
+              className="absolute text-[#3d3d41] opacity-0 transition-opacity group-hover/sidebar:opacity-100"
+            />
+          </button>
+        </HoverTooltip>
 
         <div className="flex flex-col items-center gap-1">
-          {quickActions.map(({ icon: Icon, label }) => (
-            <button key={label} className={collapsedIconClass}>
-              <Icon size={20} strokeWidth={2} className={navIconClass} />
-            </button>
+          {quickActions.map(({ icon: Icon, label, shortcut }) => (
+            <HoverTooltip key={label} text={label} shortcut={shortcut} side="right" triggerClassName="inline-flex">
+              <button aria-label={label} className={collapsedIconClass}>
+                <Icon size={20} strokeWidth={2} className={navIconClass} />
+              </button>
+            </HoverTooltip>
           ))}
           {mainNavItems.map(({ icon: Icon, label, href }) => {
             const isTasks = label === "Tasks";
             return (
-              <a key={label} href={href} className={collapsedIconClass}>
-                <Icon
-                  size={isTasks ? 18 : 20}
-                  strokeWidth={2}
-                  className={isTasks ? "h-[18px] w-[18px] shrink-0 text-[#3d3d41]" : navIconClass}
-                />
-              </a>
+              <HoverTooltip key={label} text={label} side="right" triggerClassName="inline-flex">
+                <a aria-label={label} href={href} className={collapsedIconClass}>
+                  <Icon
+                    size={isTasks ? 18 : 20}
+                    strokeWidth={2}
+                    className={isTasks ? "h-[18px] w-[18px] shrink-0 text-[#3d3d41]" : navIconClass}
+                  />
+                </a>
+              </HoverTooltip>
             );
           })}
         </div>
 
         <div className="mt-auto pb-4">
-          <button className="inline-flex h-8 w-8 shrink-0 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]">
-            <Settings size={16} strokeWidth={2} className="h-4 w-4 shrink-0 text-[#3d3d41]" />
-          </button>
+          <HoverTooltip text="Settings" side="right" triggerClassName="inline-flex">
+            <button aria-label="Settings" className="inline-flex h-8 w-8 shrink-0 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]">
+              <Settings size={16} strokeWidth={2} className="h-4 w-4 shrink-0 text-[#3d3d41]" />
+            </button>
+          </HoverTooltip>
         </div>
       </div>
 
@@ -1800,12 +1880,15 @@ function Sidebar({
               className="block h-[26px] w-[104px] object-contain"
             />
           </a>
-          <button
-            onClick={() => setOpen(false)}
-            className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]"
-          >
-            <PanelLeftClose size={20} strokeWidth={2} className="!h-5 !w-5" />
-          </button>
+          <HoverTooltip text="Close sidebar" shortcut="Ctrl." side="bottom" triggerClassName="inline-flex">
+            <button
+              aria-label="Close sidebar"
+              onClick={() => setOpen(false)}
+              className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]"
+            >
+              <PanelLeftClose size={20} strokeWidth={2} className="!h-5 !w-5" />
+            </button>
+          </HoverTooltip>
         </div>
 
         <div className="flex flex-col gap-1 px-2 pb-1">
@@ -1863,28 +1946,32 @@ function Sidebar({
           </div>
 
           <div className="border-t border-gray-200">
-            <button
-              aria-label={footerDetailsOpen ? "Hide sidebar details" : "Show sidebar details"}
-              onClick={() => setFooterDetailsOpen((open) => !open)}
-              className="flex h-5 w-full items-center justify-center py-1 text-gray-400 transition-all hover:bg-gray-50 hover:text-gray-600"
-            >
-              {footerDetailsOpen ? (
-                <ChevronDown size={12} strokeWidth={2} className="h-3 w-3" />
-              ) : (
-                <ChevronUp size={12} strokeWidth={2} className="h-3 w-3" />
-              )}
-            </button>
-            <div className="flex items-center justify-center px-4 py-2">
-              <button aria-label="Open user menu" className="cl-userButtonTrigger flex h-7 items-center justify-center rounded-md text-[13px] font-medium leading-[18px] text-[#212126]">
-                <span className="flex h-7 items-center gap-2">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-300 text-xs font-medium text-gray-600">
-                    R
-                  </span>
-                  <span className="block truncate pl-2 text-[13px] font-medium leading-[18px] text-black">
-                    Raunak Lanjewar
-                  </span>
-                </span>
+            <HoverTooltip text={footerDetailsOpen ? "Hide sidebar details" : "Show sidebar details"} side="top" triggerClassName="block">
+              <button
+                aria-label={footerDetailsOpen ? "Hide sidebar details" : "Show sidebar details"}
+                onClick={() => setFooterDetailsOpen((open) => !open)}
+                className="flex h-5 w-full items-center justify-center py-1 text-gray-400 transition-all hover:bg-gray-50 hover:text-gray-600"
+              >
+                {footerDetailsOpen ? (
+                  <ChevronDown size={12} strokeWidth={2} className="h-3 w-3" />
+                ) : (
+                  <ChevronUp size={12} strokeWidth={2} className="h-3 w-3" />
+                )}
               </button>
+            </HoverTooltip>
+            <div className="flex items-center justify-center px-4 py-2">
+              <HoverTooltip text="Open user menu" side="top" triggerClassName="inline-flex">
+                <button aria-label="Open user menu" className="cl-userButtonTrigger flex h-7 items-center justify-center rounded-md text-[13px] font-medium leading-[18px] text-[#212126]">
+                  <span className="flex h-7 items-center gap-2">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-300 text-xs font-medium text-gray-600">
+                      R
+                    </span>
+                    <span className="block truncate pl-2 text-[13px] font-medium leading-[18px] text-black">
+                      Raunak Lanjewar
+                    </span>
+                  </span>
+                </button>
+              </HoverTooltip>
             </div>
           </div>
         </div>
@@ -1963,21 +2050,27 @@ function CenterNodeToolbar({
   onAddStickyNote: () => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const addButtonRef = useRef<HTMLButtonElement | null>(null);
 
   return (
     <div className="absolute bottom-[15px] left-1/2 z-[100] -translate-x-1/2">
       <div className="flex h-[46px] items-center gap-1 overflow-visible rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm">
-        <button
-          onClick={onAddStickyNote}
-          className="rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900"
-        >
-          <StickyNote size={16} strokeWidth={2} className="h-4 w-4" />
-        </button>
+        <HoverTooltip text="Add Sticky Note" side="top" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
+          <button
+            onClick={onAddStickyNote}
+            aria-label="Sticky Note"
+            className="rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900"
+          >
+            <StickyNote size={16} strokeWidth={2} className="h-4 w-4" />
+          </button>
+        </HoverTooltip>
 
         <div className="relative h-8 w-8">
           <button
+            ref={addButtonRef}
             type="button"
             title="Add node"
+            aria-label="Add node"
             onClick={() => setPickerOpen((open) => !open)}
             className={`relative z-[70] rounded p-2 transition-colors ${
               pickerOpen
@@ -1990,6 +2083,7 @@ function CenterNodeToolbar({
 
           {pickerOpen && (
             <NodePicker
+              anchorRef={addButtonRef}
               onClose={() => setPickerOpen(false)}
               onAddGemini={() => {
                 onAddGemini();
@@ -2012,11 +2106,13 @@ function CenterNodeToolbar({
 }
 
 function NodePicker({
+  anchorRef,
   onClose,
   onAddGemini,
   onAddCrop,
   onAddStickyNote,
 }: {
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
   onClose: () => void;
   onAddGemini: () => void;
   onAddCrop: () => void;
@@ -2047,11 +2143,30 @@ function NodePicker({
   const searchResults = visibleGroups.flatMap((group) =>
     group.items.map((item) => ({ ...item, groupLabel: group.label }))
   );
+  const [position, setPosition] = useState({ x: 0, y: 0 });
 
-  return (
+  const updatePosition = useCallback(() => {
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPosition({ x: rect.left - 96, y: rect.top - 430 - 14 });
+  }, [anchorRef]);
+
+  useLayoutEffect(() => {
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [updatePosition]);
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
-      className="absolute left-0 z-[110] -translate-x-24"
-      style={{ bottom: "calc(100% + 14px)" }}
+      className="fixed z-[10000]"
+      style={{ left: position.x, top: position.y }}
     >
       <div className="relative h-[430px] w-[529px]">
         <div className="h-[430px] w-[280px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl backdrop-blur">
@@ -2070,14 +2185,16 @@ function NodePicker({
                   className="h-[38px] w-full rounded-xl border border-transparent bg-transparent py-2 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-transparent focus:outline-none focus:ring-0"
                 />
               </div>
-              <button
-                type="button"
-                title="Close"
-                onClick={onClose}
-                className="shrink-0 rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
-              >
-                <X size={16} strokeWidth={2} className="h-4 w-4" />
-              </button>
+              <HoverTooltip text="Close" side="top" triggerClassName="inline-flex shrink-0">
+                <button
+                  type="button"
+                  aria-label="Close"
+                  onClick={onClose}
+                  className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                >
+                  <X size={16} strokeWidth={2} className="h-4 w-4" />
+                </button>
+              </HoverTooltip>
             </div>
           </div>
 
@@ -2177,7 +2294,8 @@ function NodePicker({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2188,13 +2306,15 @@ function TopLeftCanvasTitle() {
     <div className="pointer-events-none absolute left-4 top-4 z-50 sm:left-16">
       <div className="pointer-events-auto flex items-center gap-2">
         <div className="inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white/85 px-2 py-1.5 shadow-md backdrop-blur">
-          <a
-            className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-800 hover:bg-gray-50"
-            title="Back to Workflow"
-            href="/workflows"
-          >
-            <ArrowLeft size={24} strokeWidth={2} className="lucide lucide-arrow-left h-4 w-4" />
-          </a>
+          <HoverTooltip text="Back to Workflow" side="bottom" triggerClassName="inline-flex">
+            <a
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-800 hover:bg-gray-50"
+              aria-label="Back to Workflow"
+              href="/workflows"
+            >
+              <ArrowLeft size={24} strokeWidth={2} className="lucide lucide-arrow-left h-4 w-4" />
+            </a>
+          </HoverTooltip>
           <div className="relative">
             <input
               value={title}
@@ -2212,7 +2332,6 @@ function TopLeftCanvasTitle() {
 
 function TopRightCanvasControls() {
   const metricClass = "inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white/90 px-2.5 text-[11px] font-medium text-gray-700 shadow-sm backdrop-blur";
-  const tooltipClass = "pointer-events-none absolute right-0 top-full z-50 mt-2 hidden whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[11px] font-medium text-white shadow-md group-hover:block";
 
   return (
     <div className="absolute right-[15px] top-[15px] z-[5]">
@@ -2234,8 +2353,8 @@ function TopRightCanvasControls() {
               <span className="text-gray-500">M</span>
             </span>
           </span>
-          <div className="group relative">
-            <button className="flex h-8 w-9 items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white shadow-sm transition-all hover:bg-[#4f46e5] disabled:cursor-not-allowed disabled:opacity-50">
+          <HoverTooltip text="Run Workflow" side="bottom" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
+            <button aria-label="Run Workflow" className="flex h-8 w-9 items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white shadow-sm transition-all hover:bg-[#4f46e5] disabled:cursor-not-allowed disabled:opacity-50">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="24"
@@ -2252,14 +2371,12 @@ function TopRightCanvasControls() {
                 <polygon points="6 3 20 12 6 21 6 3" />
               </svg>
             </button>
-            <span className={tooltipClass}>Run Workflow</span>
-          </div>
-          <div className="group relative">
-            <button className="flex h-8 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-800 shadow-sm transition-all hover:bg-gray-100">
+          </HoverTooltip>
+          <HoverTooltip text="Execution History" side="bottom" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
+            <button aria-label="Execution History" className="flex h-8 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-800 shadow-sm transition-all hover:bg-gray-100">
               <Clock size={14} strokeWidth={2} className="h-3.5 w-3.5" />
             </button>
-            <span className={tooltipClass}>Execution History</span>
-          </div>
+          </HoverTooltip>
         </div>
       </div>
     </div>
@@ -2268,14 +2385,17 @@ function TopRightCanvasControls() {
 
 function BottomRightCanvasControls() {
   return (
-    <button
-      type="button"
-      title="Show minimap"
-      className="absolute z-20 rounded-lg border border-gray-200 bg-white p-1.5 text-gray-500 shadow-sm transition-colors hover:bg-gray-100"
-      style={{ bottom: 16, right: 75 }}
-    >
-      <Map size={16} strokeWidth={2} className="h-4 w-4" />
-    </button>
+    <div className="absolute z-20" style={{ bottom: 16, right: 75 }}>
+      <HoverTooltip text="Show minimap" side="top" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex" className="whitespace-nowrap">
+        <button
+          type="button"
+          aria-label="Show minimap"
+          className="rounded-lg border border-gray-200 bg-white p-1.5 text-gray-500 shadow-sm transition-colors hover:bg-gray-100"
+        >
+          <Map size={16} strokeWidth={2} className="h-4 w-4" />
+        </button>
+      </HoverTooltip>
+    </div>
   );
 }
 
@@ -2291,21 +2411,22 @@ function BottomToolbar() {
   if (collapsed) {
     return (
       <div className={toolbarShellClass}>
-        <ToolbarButton icon={ChevronRight} onClick={() => setCollapsed(false)} />
+        <ToolbarButton icon={ChevronRight} label="Expand controls" onClick={() => setCollapsed(false)} />
       </div>
     );
   }
 
   return (
     <div className={toolbarShellClass}>
-      <ToolbarButton icon={ChevronLeft} onClick={() => setCollapsed(true)} />
+      <ToolbarButton icon={ChevronLeft} label="Collapse controls" onClick={() => setCollapsed(true)} />
       <Divider />
-      <ToolbarButton icon={Undo2} onClick={noop} disabled />
-      <ToolbarButton icon={Redo2} onClick={noop} disabled />
-      <ToolbarButton icon={Command} onClick={noop} />
+      <ToolbarButton icon={Undo2} label="Undo" onClick={noop} disabled />
+      <ToolbarButton icon={Redo2} label="Redo" onClick={noop} disabled />
+      <ToolbarButton icon={Command} label="Keyboard shortcuts" onClick={noop} />
       <Divider />
       <ToolbarButton
         icon={ZoomOut}
+        label="Zoom out"
         onClick={() => zoomOut()}
         disabled={zoom <= MIN_ZOOM + 0.001}
       />
@@ -2314,34 +2435,46 @@ function BottomToolbar() {
       </span>
       <ToolbarButton
         icon={ZoomIn}
+        label="Zoom in"
         onClick={() => zoomIn()}
         disabled={zoom >= MAX_ZOOM - 0.001}
       />
       <Divider />
-      <ToolbarButton icon={Maximize2} onClick={() => fitView()} />
-      <ToolbarButton icon={LayoutGrid} onClick={noop} />
-      <ToolbarButton icon={Move} onClick={noop} />
+      <ToolbarButton icon={Maximize2} label="Fit view" onClick={() => fitView()} />
+      <ToolbarButton icon={LayoutGrid} label="Toggle minimap" onClick={noop} />
+      <ToolbarButton icon={Move} label="Pan tool" onClick={noop} />
     </div>
   );
 }
 
 function ToolbarButton({
   icon: Icon,
+  label,
   onClick,
   disabled,
 }: {
   icon: React.ElementType;
+  label: string;
   onClick: () => void;
   disabled?: boolean;
 }) {
-  return (
+  const button = (
     <button
       onClick={onClick}
       disabled={disabled}
+      aria-label={label}
       className="rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300"
     >
       <Icon size={14} strokeWidth={2} className="h-3.5 w-3.5" />
     </button>
+  );
+
+  if (disabled) return button;
+
+  return (
+    <HoverTooltip text={label} side="top" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
+      {button}
+    </HoverTooltip>
   );
 }
 
@@ -2397,13 +2530,14 @@ export default function WorkflowCanvasPage() {
   }, [setNodes]);
 
   return (
-    <div className="flex h-screen w-full">
-      {/* <PromoTopbar /> */}
-      <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
+    <ReactFlowProvider>
+      <div className="flex h-screen w-full">
+        {/* <PromoTopbar /> */}
+        <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
 
-      <div className="relative flex-1">
-        <ReactFlow
-          nodes={nodes}
+        <div className="relative flex-1">
+          <ReactFlow
+            nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
@@ -2427,8 +2561,9 @@ export default function WorkflowCanvasPage() {
           <BottomRightCanvasControls />
           <BottomToolbar />
           <CenterNodeToolbar onAddGemini={handleAddGemini} onAddCrop={handleAddCrop} onAddStickyNote={handleAddStickyNote} />
-        </ReactFlow>
+          </ReactFlow>
+        </div>
       </div>
-    </div>
+    </ReactFlowProvider>
   );
 }

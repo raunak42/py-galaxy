@@ -199,19 +199,7 @@
     display: block;
     width: max-content;
     max-width: none !important;
-    overflow: visible;
-    border-color: rgb(229, 229, 229);
-    border-radius: 15.3px;
-    background-color: rgb(246, 246, 244);
-    padding: 5.1px 10.2px;
-    color: rgb(27, 27, 24);
-    font-size: 9.35px;
     white-space: nowrap;
-    box-shadow: rgba(0, 0, 0, 0) 0px 0px 0px 0px,
-      rgba(0, 0, 0, 0) 0px 0px 0px 0px,
-      rgba(0, 0, 0, 0.1) 0px 4px 6px -1px,
-      rgba(0, 0, 0, 0.1) 0px 2px 4px -2px;
-    line-height: 15.19375px;
     animation-duration: 0.15s;
     animation-timing-function: ease;
     transform-origin: var(--radix-tooltip-content-transform-origin);
