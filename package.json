@@ -6,15 +6,21 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "trigger:dev": "trigger dev",
+    "trigger:deploy": "trigger deploy"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@radix-ui/react-toast": "^1.2.18",
     "@tabler/icons-react": "^3.44.0",
+    "@trigger.dev/sdk": "^4.4.6",
     "@xyflow/react": "^12.11.1",
     "lucide-react": "^1.22.0",
     "next": "16.2.9",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -24,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
+    "trigger.dev": "^4.4.6",
     "typescript": "^5"
   }
 }
