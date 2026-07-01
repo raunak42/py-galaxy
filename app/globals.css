@@ -1,26 +1,381 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@keyframes fade-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(
+        var(--tw-enter-translate-x, 0),
+        var(--tw-enter-translate-y, 0),
+        0
+      )
+      scale3d(
+        var(--tw-enter-scale, 1),
+        var(--tw-enter-scale, 1),
+        var(--tw-enter-scale, 1)
+      )
+      rotate(var(--tw-enter-rotate, 0));
+  }
+}
+
+@keyframes exit {
+  to {
+    opacity: var(--tw-exit-opacity, 1);
+    transform: translate3d(
+        var(--tw-exit-translate-x, 0),
+        var(--tw-exit-translate-y, 0),
+        0
+      )
+      scale3d(
+        var(--tw-exit-scale, 1),
+        var(--tw-exit-scale, 1),
+        var(--tw-exit-scale, 1)
+      )
+      rotate(var(--tw-exit-rotate, 0));
+  }
+}
+
+@layer utilities {
+  .animate-fade-in-down {
+    animation: fade-in-down 200ms ease-out both;
+  }
+
+  .bg-popover {
+    background-color: rgb(246, 246, 244);
+  }
+
+  .text-popover-foreground {
+    color: rgb(27, 27, 24);
+  }
+
+  .accent-workflow-accent-500 {
+    accent-color: rgb(99, 102, 241);
+  }
+
+  .bg-workflow-accent-500 {
+    background-color: rgb(99, 102, 241);
+  }
+
+  .bg-input {
+    background-color: rgb(229, 229, 229);
+  }
+
+  .bg-background {
+    background-color: rgb(255, 255, 255);
+  }
+
+  .bg-muted {
+    background-color: rgb(229, 229, 229);
+  }
+
+  .bg-accent,
+  .hover\:bg-accent:hover,
+  .focus\:bg-accent:focus {
+    background-color: rgba(0, 0, 0, 0.04);
+  }
+
+  .border-border\/20 {
+    border-color: rgba(229, 229, 229, 0.2);
+  }
+
+  input[type="range"].appearance-none::-webkit-slider-runnable-track {
+    height: 8px;
+    border-radius: 8px;
+    background: rgb(229, 231, 235);
+  }
+
+  input[type="range"].appearance-none::-webkit-slider-thumb {
+    width: 16px;
+    height: 16px;
+    margin-top: -4px;
+    appearance: none;
+    border: 0;
+    border-radius: 9999px;
+    background: rgb(99, 102, 241);
+  }
+
+  input[type="range"].appearance-none::-moz-range-track {
+    height: 8px;
+    border-radius: 8px;
+    background: rgb(229, 231, 235);
+  }
+
+  input[type="range"].appearance-none::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: 0;
+    border-radius: 9999px;
+    background: rgb(99, 102, 241);
+  }
+
+  .react-flow__handle {
+    position: relative;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease !important;
+    transform-origin: center center !important;
+  }
+
+  .react-flow__handle[style*="--handle-color"] {
+    width: 14px !important;
+    min-width: 14px !important;
+    max-width: 14px !important;
+    height: 14px !important;
+    min-height: 14px !important;
+    max-height: 14px !important;
+    aspect-ratio: 1 / 1 !important;
+    border-radius: 9999px !important;
+    transform: none !important;
+    transform-origin: center center !important;
+  }
+
+  .react-flow__handle::after,
+  .react-flow__handle::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    border-radius: 50%;
+  }
+
+  .react-flow__handle::before {
+    transform: translate(-50%, -50%) scale(1);
+    width: 28px;
+    height: 28px;
+    background: var(--handle-color, currentColor);
+    opacity: 0;
+    transition: opacity 0.15s, transform 0.15s;
+    pointer-events: none;
+  }
+
+  .react-flow__handle::after {
+    transform: translate(-50%, -50%);
+    width: 50px;
+    height: 50px;
+    cursor: crosshair;
+  }
+
+  .react-flow__node:hover .react-flow__handle::before {
+    opacity: 0.12;
+  }
+
+  .connecting .react-flow__handle[style*="--handle-color"],
+  .react-flow__handle[style*="--handle-color"].connecting,
+  .react-flow__handle[style*="--handle-color"].connectingfrom,
+  .react-flow__handle[style*="--handle-color"].connectingto,
+  .react-flow__handle[style*="--handle-color"].valid,
+  .react-flow__handle[style*="--handle-color"]:hover {
+    width: 14px !important;
+    min-width: 14px !important;
+    max-width: 14px !important;
+    height: 14px !important;
+    min-height: 14px !important;
+    max-height: 14px !important;
+    aspect-ratio: 1 / 1 !important;
+    border-radius: 9999px !important;
+    transform: scale(1.285714) !important;
+    transform-origin: center center !important;
+  }
+
+  .react-flow__handle:hover::before {
+    opacity: 0.2;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+
+  .react-flow__handle:hover {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--handle-color, #6366f1) 22%, transparent);
+  }
+
+  .py-tooltip-content {
+    display: block;
+    width: max-content;
+    max-width: none !important;
+    overflow: visible;
+    border-color: rgb(229, 229, 229);
+    border-radius: 15.3px;
+    background-color: rgb(246, 246, 244);
+    padding: 5.1px 10.2px;
+    color: rgb(27, 27, 24);
+    font-size: 9.35px;
+    white-space: nowrap;
+    box-shadow: rgba(0, 0, 0, 0) 0px 0px 0px 0px,
+      rgba(0, 0, 0, 0) 0px 0px 0px 0px,
+      rgba(0, 0, 0, 0.1) 0px 4px 6px -1px,
+      rgba(0, 0, 0, 0.1) 0px 2px 4px -2px;
+    line-height: 15.19375px;
+    animation-duration: 0.15s;
+    animation-timing-function: ease;
+    transform-origin: var(--radix-tooltip-content-transform-origin);
+  }
+
+  .animate-in {
+    animation-name: enter;
+  }
+
+  .animate-out {
+    animation-name: exit;
+  }
+
+  .fade-in-0 {
+    --tw-enter-opacity: 0;
+  }
+
+  .fade-out-0 {
+    --tw-exit-opacity: 0;
+  }
+
+  .zoom-in-95 {
+    --tw-enter-scale: 0.95;
+  }
+
+  .zoom-out-95 {
+    --tw-exit-scale: 0.95;
+  }
+
+  .py-tooltip-content[data-side="bottom"] {
+    --tw-enter-translate-y: -0.5rem;
+  }
+
+  .py-tooltip-content[data-side="top"] {
+    --tw-enter-translate-y: 0.5rem;
+  }
+
+  .py-tooltip-content[data-side="left"] {
+    --tw-enter-translate-x: 0.5rem;
+  }
+
+  .py-tooltip-content[data-side="right"] {
+    --tw-enter-translate-x: -0.5rem;
+  }
+
+  .py-tooltip-content[data-state="closed"] {
+    --tw-exit-opacity: 0;
+    --tw-exit-scale: 0.95;
+    animation-name: exit;
+    animation-fill-mode: forwards;
+  }
+
+  .py-menu-content {
+    transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+    animation-duration: 0.15s;
+    animation-timing-function: ease;
+  }
+
+  .py-menu-content[data-state="open"] {
+    --tw-enter-opacity: 0;
+    --tw-enter-scale: 0.95;
+    --tw-enter-translate-y: -0.5rem;
+    animation-name: enter;
+  }
+
+  .py-menu-content[data-state="closed"] {
+    --tw-exit-opacity: 0;
+    --tw-exit-scale: 0.95;
+    animation-name: exit;
+    animation-fill-mode: forwards;
+  }
+
+  .chat-upload-popover {
+    z-index: 50;
+    display: flex;
+    width: min(80vw, 246px);
+    max-width: calc(100vw - 32px);
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    color: #3d3d41;
+    background: #f0f0f0;
+    border: 0.5px solid #e0e0e2;
+    border-radius: 20px;
+    box-shadow: 0px 24px 32px -8px rgba(26, 26, 24, 0.12),
+      0px 8px 12px -6px rgba(26, 26, 24, 0.06);
+  }
+
+  .chat-upload-popover-action {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    font-family: var(--font-inter), Inter, sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    border-radius: 8px;
+  }
+
+  .chat-upload-popover-action-secondary {
+    color: #3d3d41;
+    background: #f5f5f5;
+    border: 0.3px solid #e0e0e2;
+    transition: background-color 0.15s, border-color 0.15s;
+  }
+
+  .chat-upload-popover-action-secondary:hover {
+    background: #ffffff;
+  }
+
+  .chat-upload-popover-action-primary {
+    color: #ffffff;
+    background: #4f46e6;
+    border: 0.3px solid transparent;
+    transition: opacity 0.15s;
+  }
+
+  .chat-upload-popover-action-primary:hover {
+    opacity: 0.9;
+  }
+
+  .py-upload-popover-content {
+    transform-origin: var(--radix-tooltip-content-transform-origin);
+    animation-duration: 0.15s;
+    animation-timing-function: ease;
+  }
+
+  .py-upload-popover-content[data-state="open"] {
+    --tw-enter-opacity: 0;
+    --tw-enter-scale: 0.95;
+    --tw-enter-translate-y: -0.5rem;
+    animation-name: enter;
+  }
+
+  .py-upload-popover-content[data-state="closed"] {
+    --tw-exit-opacity: 0;
+    --tw-exit-scale: 0.95;
+    animation-name: exit;
+    animation-fill-mode: forwards;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    font-family: var(--font-inter), Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+
+  :where(
+      a[href],
+      button:not(:disabled),
+      [role="button"]:not([aria-disabled="true"]),
+      summary,
+      select:not(:disabled),
+      input[type="button"]:not(:disabled),
+      input[type="submit"]:not(:disabled),
+      input[type="reset"]:not(:disabled),
+      input[type="checkbox"]:not(:disabled),
+      input[type="radio"]:not(:disabled),
+      label[for]
+    ):hover {
+    cursor: pointer;
+  }
 }
