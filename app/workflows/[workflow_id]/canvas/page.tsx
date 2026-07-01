@@ -41,6 +41,7 @@ import {
   Wallet,
   Clock,
   Map,
+  ArrowLeft,
   PanelLeftOpen,
   PanelLeftClose,
   Gift,
@@ -909,6 +910,195 @@ function NodeMenu({
   );
 }
 
+function LiveNodeHeader({
+  title,
+  tooltip,
+  onMenuOpen,
+  menuOpen,
+  menuButtonRef,
+}: {
+  title: string;
+  tooltip: string;
+  onMenuOpen: () => void;
+  menuOpen: boolean;
+  menuButtonRef: React.RefObject<HTMLButtonElement | null>;
+}) {
+  return (
+    <div className="flex h-[59px] items-start justify-between border-b border-gray-100 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="w-full min-w-0 cursor-grab select-none truncate text-sm font-medium leading-5 text-gray-900">
+          {title}
+        </div>
+      </div>
+      <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
+        <InfoTooltip text={tooltip} size={14} className="" />
+        <button className="nodrag rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40">
+          <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+        </button>
+        <button className="nodrag flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium leading-4 text-green-500 transition-all hover:bg-green-500/30">
+          <Play size={12} strokeWidth={2} className="h-3 w-3 fill-current" />
+          <span>Run</span>
+        </button>
+        <button
+          ref={menuButtonRef}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          data-state={menuOpen ? "open" : "closed"}
+          onClick={onMenuOpen}
+          className="nodrag inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-100"
+        >
+          <MoreHorizontal size={16} strokeWidth={2} className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LiveNodeShell({ children }: { children: ReactNode }) {
+  return <div className="w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">{children}</div>;
+}
+
+function CropImageNode() {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  return (
+    <LiveNodeShell>
+      <LiveNodeHeader
+        title="Crop Image"
+        tooltip="Crop an image by percentage coordinates."
+        menuOpen={menuOpen}
+        menuButtonRef={menuButtonRef}
+        onMenuOpen={() => setMenuOpen((open) => !open)}
+      />
+      <NodeMenu open={menuOpen} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />
+      <div className="px-4 py-4">
+        <div className="space-y-4">
+          <CropImageUpload id="input-image" label="Input Image" required />
+          <CropImageNumber id="x-position" label="X Position (%)" defaultValue="0" />
+          <CropImageNumber id="y-position" label="Y Position (%)" defaultValue="0" />
+          <CropImageNumber id="width" label="Width (%)" defaultValue="100" />
+          <CropImageNumber id="height" label="Height (%)" defaultValue="100" />
+        </div>
+
+        <div className="mt-4 border-t border-gray-100 pt-4">
+          <div className="relative overflow-visible">
+            <div className="absolute right-[-23px] top-2 z-50 flex -translate-y-1/2 items-center">
+              <Handle
+                id="output-image"
+                type="source"
+                position={Position.Right}
+                className="!relative !right-auto !top-auto !translate-x-0 !translate-y-0 !rounded-full !border-2"
+                style={{
+                  position: "relative",
+                  right: "auto",
+                  top: "auto",
+                  width: 14,
+                  height: 14,
+                  borderRadius: "50%",
+                  background: "#3b82f6",
+                  borderColor: "#3b82f680",
+                  boxShadow: "#3b82f650 0px 0px 8px",
+                  cursor: "crosshair",
+                  ['--handle-color' as string]: "#3b82f6",
+                }}
+              />
+            </div>
+            <div className="mb-1.5 text-xs font-normal leading-4 text-gray-500">Output Image</div>
+            <div className="flex h-10 items-center justify-center rounded border border-gray-200 bg-white">
+              <span className="text-xs text-gray-400">No output yet</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-end gap-1 text-[10px] leading-[15px] text-gray-400">
+          <Coins size={12} strokeWidth={2} className="h-3 w-3" />
+          <span>~0.005 M</span>
+        </div>
+      </div>
+    </LiveNodeShell>
+  );
+}
+
+function CropImageUpload({ id, label, required }: { id: string; label: string; required?: boolean }) {
+  return (
+    <div className="relative">
+      <FieldHandle id={id} color="#3b82f6" top={12} />
+      <div className="flex items-start gap-3">
+        <div className="flex h-6 min-w-[96px] shrink-0 items-center text-xs font-normal leading-4 text-gray-500">
+          {label}{required && <span className="text-red-400">*</span>}
+        </div>
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            tabIndex={-1}
+            title="Upload image"
+            className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
+          >
+            <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+            <span>Upload Image</span>
+          </button>
+        </div>
+        <AddToRequestButton className="mt-1.5" />
+      </div>
+    </div>
+  );
+}
+
+function CropImageNumber({ id, label, defaultValue }: { id: string; label: string; defaultValue: string }) {
+  const [value, setValue] = useState(defaultValue);
+
+  const reset = () => setValue(defaultValue);
+  const update = (next: string) => {
+    const parsed = Number(next);
+    if (Number.isNaN(parsed)) {
+      setValue(next);
+      return;
+    }
+    setValue(String(Math.min(100, Math.max(0, parsed))));
+  };
+
+  return (
+    <div className="relative overflow-visible">
+      <FieldHandle id={id} color="#ec4899" top={14} />
+      <div className="space-y-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex min-w-0 shrink items-center truncate text-xs font-normal leading-4 text-gray-500">
+            {label}
+            <InfoTooltip text={`${label} from 0 to 100`} className="ml-1" />
+          </span>
+          <input
+            min="0"
+            max="100"
+            step="1"
+            type="range"
+            value={value}
+            onChange={(event) => update(event.target.value)}
+            className="nodrag h-2 min-w-[60px] flex-1 appearance-none rounded-lg bg-gray-200 accent-workflow-accent-500 disabled:opacity-50"
+          />
+          <input
+            min="0"
+            max="100"
+            type="number"
+            value={value}
+            onChange={(event) => update(event.target.value)}
+            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={reset}
+            className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:opacity-50"
+          >
+            <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+          </button>
+          <AddToRequestButton />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GeminiPreviewNode() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -999,11 +1189,12 @@ function GeminiPreviewNode() {
           </div>
         </div>
 
-        <div className="mt-2 flex items-center justify-end gap-1.5 text-xs text-gray-400">
-          <Info size={12} strokeWidth={2} className="h-3 w-3" />
-          <span>~</span>
+        <div className="mt-3 flex items-center justify-end gap-1 text-[10px] leading-[15px] text-gray-400">
           <Coins size={12} strokeWidth={2} className="h-3 w-3" />
-          <span>0.0001 M</span>
+          <span>~0.0001 M</span>
+          <HoverTooltip text="Variable credits based on actual token usage" side="top" triggerClassName="inline-flex shrink-0 cursor-help text-gray-400">
+            <Info size={12} strokeWidth={2} className="h-3 w-3" />
+          </HoverTooltip>
         </div>
       </div>
     </div>
@@ -1179,7 +1370,7 @@ function GeminiSettingSlider({
             max={max}
             value={currentValue}
             onChange={(event) => setCurrentValue(event.target.value)}
-            className="nodrag w-12 shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1.5 py-1 text-center text-xs text-gray-900 outline-none disabled:opacity-50"
+            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none disabled:opacity-50"
           />
           <ResetSettingButton />
           <AddToRequestButton />
@@ -1219,7 +1410,7 @@ function GeminiSettingNumber({
             step={step}
             value={currentValue}
             onChange={(event) => setCurrentValue(event.target.value)}
-            className="nodrag w-20 shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-center text-sm text-gray-900 outline-none focus:border-workflow-accent-500 disabled:opacity-50"
+            className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none focus:border-workflow-accent-500 disabled:opacity-50"
           />
           <ResetSettingButton />
           <AddToRequestButton />
@@ -1288,7 +1479,7 @@ function GeminiSettingTextarea({
   );
 }
 
-const nodeTypes = { geminiPreview: GeminiPreviewNode };
+const nodeTypes = { geminiPreview: GeminiPreviewNode, cropImage: CropImageNode };
 
 const quickActions = [
   { icon: Plus, label: "New task", shortcut: "CtrlShift+O" },
@@ -1546,8 +1737,10 @@ const pickerGroups: PickerGroup[] = [
 
 function CenterNodeToolbar({
   onAddGemini,
+  onAddCrop,
 }: {
   onAddGemini: () => void;
+  onAddCrop: () => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -1579,6 +1772,10 @@ function CenterNodeToolbar({
                 onAddGemini();
                 setPickerOpen(false);
               }}
+              onAddCrop={() => {
+                onAddCrop();
+                setPickerOpen(false);
+              }}
             />
           )}
         </div>
@@ -1590,9 +1787,11 @@ function CenterNodeToolbar({
 function NodePicker({
   onClose,
   onAddGemini,
+  onAddCrop,
 }: {
   onClose: () => void;
   onAddGemini: () => void;
+  onAddCrop: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [activeGroup, setActiveGroup] = useState<PickerGroup>(pickerGroups[0]);
@@ -1664,7 +1863,7 @@ function NodePicker({
                     key={`${groupLabel}-${label}`}
                     type="button"
                     draggable
-                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : undefined}
+                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : label === "Crop Image" ? onAddCrop : undefined}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-gray-50"
                   >
                     <Icon size={20} strokeWidth={2} className="h-5 w-5 shrink-0 text-gray-700" />
@@ -1730,7 +1929,7 @@ function NodePicker({
                     key={label}
                     type="button"
                     draggable
-                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : undefined}
+                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : label === "Crop Image" ? onAddCrop : undefined}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50"
                   >
                     <Icon size={16} strokeWidth={2} className="h-4 w-4 text-gray-700" />
@@ -1748,6 +1947,35 @@ function NodePicker({
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function TopLeftCanvasTitle() {
+  const [title, setTitle] = useState("Dummy Workflow Title");
+
+  return (
+    <div className="pointer-events-none absolute left-4 top-4 z-50 sm:left-16">
+      <div className="pointer-events-auto flex items-center gap-2">
+        <div className="inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white/85 px-2 py-1.5 shadow-md backdrop-blur">
+          <a
+            className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-800 hover:bg-gray-50"
+            title="Back to Workflow"
+            href="/workflows"
+          >
+            <ArrowLeft size={24} strokeWidth={2} className="lucide lucide-arrow-left h-4 w-4" />
+          </a>
+          <div className="relative">
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Untitled"
+              maxLength={120}
+              className="h-8 w-[120px] bg-transparent text-[14px] font-normal text-gray-900 outline-none placeholder:text-gray-400 sm:w-[160px]"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1915,6 +2143,18 @@ export default function WorkflowCanvasPage() {
     ]);
   }, [setNodes]);
 
+  const handleAddCrop = useCallback(() => {
+    setNodes((nds) => [
+      ...nds,
+      {
+        id: `crop-${Date.now()}`,
+        type: "cropImage",
+        position: { x: 360, y: 360 },
+        data: {},
+      },
+    ]);
+  }, [setNodes]);
+
   return (
     <div className="flex h-screen w-full">
       {/* <PromoTopbar /> */}
@@ -1942,10 +2182,11 @@ export default function WorkflowCanvasPage() {
             color="#cacaca"
           />
           <CanvasZoomKeyboardHandler />
+          <TopLeftCanvasTitle />
           <TopRightCanvasControls />
           <BottomRightCanvasControls />
           <BottomToolbar />
-          <CenterNodeToolbar onAddGemini={handleAddGemini} />
+          <CenterNodeToolbar onAddGemini={handleAddGemini} onAddCrop={handleAddCrop} />
         </ReactFlow>
       </div>
     </div>
