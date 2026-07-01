@@ -1,0 +1,1445 @@
+"use client";
+
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  ReactFlow,
+  Background,
+  BackgroundVariant,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  useReactFlow,
+  useViewport,
+  Handle,
+  Position,
+  type Connection,
+  type Edge,
+  type Node,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { createPortal } from "react-dom";
+import { IconArrowsSplit, IconUpload } from "@tabler/icons-react";
+import {
+  Plus,
+  Search,
+  X,
+  StickyNote,
+  Layers,
+  Crop,
+  MessageSquareMore,
+  FolderOpen,
+  Library,
+  Boxes,
+  BookOpen,
+  Settings,
+  RotateCcw,
+  MoreHorizontal,
+  Play,
+  Info,
+  Coins,
+  PanelLeftOpen,
+  PanelLeftClose,
+  Gift,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Undo2,
+  Redo2,
+  Command,
+  ZoomOut,
+  ZoomIn,
+  Maximize2,
+  LayoutGrid,
+  Move,
+  ImagePlus,
+} from "lucide-react";
+
+// ---- Zoom limits: canvas should only zoom between 10% and 200% ----
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 2;
+
+// ---- Sidebar widths, lifted from the reference site's `.chat-sidebar-shell` ----
+const SIDEBAR_COLLAPSED_WIDTH = 52; // measured
+const SIDEBAR_EXPANDED_WIDTH = 296;
+
+const initialNodes: Node[] = [];
+
+const initialEdges: Edge[] = [];
+
+function FieldHandle({
+  id,
+  color = "#f59e0b",
+  top = 14,
+}: {
+  id: string;
+  color?: string;
+  top?: number;
+}) {
+  return (
+    <div
+      className="absolute left-[-23px] z-50 flex h-3.5 w-3.5 -translate-y-1/2 items-center"
+      style={{ top }}
+    >
+      <Handle
+        id={id}
+        type="target"
+        position={Position.Left}
+        className="!relative !left-auto !top-auto !translate-x-0 !translate-y-0 !rounded-full !border-2"
+        style={{
+          position: "relative",
+          left: "auto",
+          top: "auto",
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          background: color,
+          borderColor: `${color}80`,
+          boxShadow: `${color}50 0px 0px 8px`,
+          cursor: "crosshair",
+          ['--handle-color' as string]: color,
+        }}
+      />
+    </div>
+  );
+}
+
+function AddToRequestButton({ className = "" }: { className?: string }) {
+  return (
+    <button
+      type="button"
+      className={`nodrag inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+    >
+      <Plus size={16} strokeWidth={2} className="h-4 w-4" />
+    </button>
+  );
+}
+
+function HoverTooltip({
+  text,
+  children,
+  side = "bottom",
+  className = "",
+  triggerClassName = "",
+}: {
+  text: string;
+  children: ReactNode;
+  side?: "top" | "bottom";
+  className?: string;
+  triggerClassName?: string;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const [open, setOpen] = useState(false);
+  const { zoom } = useViewport();
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const tooltipId = useId();
+
+  const updatePosition = useCallback(() => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const contentWidth = contentRef.current?.offsetWidth ?? 0;
+    const contentHeight = contentRef.current?.offsetHeight ?? 0;
+    setPosition({
+      x: rect.left + rect.width / 2 - (contentWidth * zoom) / 2,
+      y: side === "top" ? rect.top - (contentHeight + 8) * zoom : rect.bottom + 8 * zoom,
+    });
+  }, [side, zoom]);
+
+  const showTooltip = useCallback(() => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    updatePosition();
+    setMounted(true);
+    requestAnimationFrame(() => setOpen(true));
+  }, [updatePosition]);
+
+  const hideTooltip = useCallback(() => {
+    setOpen(false);
+    closeTimerRef.current = window.setTimeout(() => setMounted(false), 150);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (mounted) updatePosition();
+  }, [mounted, text, zoom, updatePosition]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [mounted, updatePosition]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
+  return (
+    <>
+      <span
+        ref={triggerRef}
+        tabIndex={0}
+        data-state={open ? "instant-open" : "closed"}
+        aria-describedby={mounted ? tooltipId : undefined}
+        onMouseEnter={showTooltip}
+        onMouseLeave={hideTooltip}
+        onFocus={showTooltip}
+        onBlur={hideTooltip}
+        className={triggerClassName}
+      >
+        {children}
+      </span>
+      {mounted &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            data-radix-popper-content-wrapper=""
+            style={{
+              position: "fixed",
+              left: 0,
+              top: 0,
+              transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+              transformOrigin: "top left",
+              minWidth: "max-content",
+              willChange: "transform",
+              zIndex: 100,
+              ['--radix-popper-transform-origin' as string]: side === "top" ? '50% 100%' : '50% 0px',
+            }}
+          >
+            <div
+              ref={contentRef}
+              data-side={side}
+              data-align="center"
+              data-state={open ? "instant-open" : "closed"}
+              className={`py-tooltip-content rounded-[18px] border bg-popover px-3 py-1.5 text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-[100] text-[11px] font-normal leading-relaxed ${className}`}
+              style={{
+                ['--radix-tooltip-content-transform-origin' as string]: 'var(--radix-popper-transform-origin)',
+                ['--radix-tooltip-content-available-width' as string]: 'var(--radix-popper-available-width)',
+                ['--radix-tooltip-content-available-height' as string]: 'var(--radix-popper-available-height)',
+                ['--radix-tooltip-trigger-width' as string]: 'var(--radix-popper-anchor-width)',
+                ['--radix-tooltip-trigger-height' as string]: 'var(--radix-popper-anchor-height)',
+                animationFillMode: open ? undefined : 'forwards',
+              }}
+            >
+              {text}
+              <span
+                id={tooltipId}
+                role="tooltip"
+                style={{
+                  position: 'absolute',
+                  border: 0,
+                  width: 1,
+                  height: 1,
+                  padding: 0,
+                  margin: -1,
+                  overflow: 'hidden',
+                  clip: 'rect(0px, 0px, 0px, 0px)',
+                  whiteSpace: 'nowrap',
+                  overflowWrap: 'normal',
+                }}
+              >
+                {text}
+              </span>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
+function InfoTooltip({
+  text,
+  size = 12,
+  className = "ml-1",
+}: {
+  text: string;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <HoverTooltip text={text} side="bottom" triggerClassName={`${className} inline-flex shrink-0 cursor-pointer text-gray-400`}>
+      <Info size={size} strokeWidth={2} className={size === 14 ? "h-3.5 w-3.5" : "h-3 w-3"} />
+    </HoverTooltip>
+  );
+}
+
+function ResetSettingButton() {
+  return (
+    <button className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] text-gray-400 hover:text-gray-600 disabled:opacity-50">
+      <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+function UploadPopover({
+  open,
+  anchorRef,
+  onClose,
+}: {
+  open: boolean;
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+}) {
+  const { zoom } = useViewport();
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(open);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const popoverId = useId();
+
+  const updatePosition = useCallback(() => {
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPosition({
+      x: rect.left,
+      y: rect.bottom + 8 * zoom,
+    });
+  }, [anchorRef, zoom]);
+
+  useLayoutEffect(() => {
+    if (open) updatePosition();
+  }, [open, zoom, updatePosition]);
+
+  useEffect(() => {
+    if (open) {
+      const timeout = window.setTimeout(() => {
+        setMounted(true);
+        setVisible(true);
+      }, 0);
+      return () => window.clearTimeout(timeout);
+    }
+    const timeout = window.setTimeout(() => {
+      setVisible(false);
+      window.setTimeout(() => setMounted(false), 150);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [open]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as globalThis.Node;
+      if (anchorRef.current?.contains(target)) return;
+      const popover = document.getElementById(popoverId);
+      if (popover?.contains(target)) return;
+      onClose();
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorRef, mounted, onClose, popoverId, updatePosition]);
+
+  if (!mounted || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      id={popoverId}
+      data-radix-popper-content-wrapper=""
+      style={{
+        position: "fixed",
+        left: 0,
+        top: 0,
+        transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+        transformOrigin: "top left",
+        minWidth: "max-content",
+        willChange: "transform",
+        zIndex: 50,
+        ['--radix-popper-transform-origin' as string]: '50% 0px',
+      }}
+    >
+      <div
+        className="chat-upload-popover py-upload-popover-content"
+        data-state={visible ? "open" : "closed"}
+        data-side="bottom"
+        style={{
+          ['--radix-tooltip-content-transform-origin' as string]: 'var(--radix-popper-transform-origin)',
+        }}
+      >
+        <p className="text-xs text-[#3d3d41]">Add a file from your device or select one from your library</p>
+        <button type="button" onClick={onClose} className="chat-upload-popover-action chat-upload-popover-action-secondary">
+          <ImagePlus size={16} strokeWidth={2} className="h-4 w-4" />
+          Select Asset
+        </button>
+        <button type="button" onClick={onClose} className="chat-upload-popover-action chat-upload-popover-action-primary">
+          <Plus size={16} strokeWidth={2} className="h-4 w-4" />
+          Upload
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function NodeMenu({
+  open,
+  anchorRef,
+  onClose,
+}: {
+  open: boolean;
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+}) {
+  const { zoom } = useViewport();
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(open);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const menuId = useId();
+
+  const updatePosition = useCallback(() => {
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPosition({
+      x: rect.right - 200 * zoom,
+      y: rect.bottom + 4 * zoom,
+    });
+  }, [anchorRef, zoom]);
+
+  useLayoutEffect(() => {
+    if (open) updatePosition();
+  }, [open, zoom, updatePosition]);
+
+  useEffect(() => {
+    if (open) {
+      const timeout = window.setTimeout(() => {
+        setMounted(true);
+        setVisible(true);
+      }, 0);
+      return () => window.clearTimeout(timeout);
+    }
+    const timeout = window.setTimeout(() => {
+      setVisible(false);
+      window.setTimeout(() => setMounted(false), 150);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as globalThis.Node;
+      if (anchorRef.current?.contains(target)) return;
+      const menu = document.getElementById(menuId);
+      if (menu?.contains(target)) return;
+      onClose();
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorRef, menuId, onClose, open, updatePosition]);
+
+  if (!mounted || typeof document === "undefined") return null;
+
+  const itemClass =
+    "relative flex h-9 cursor-pointer select-none items-center gap-3 rounded-[14px] px-3.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0";
+
+  return createPortal(
+    <div
+      data-radix-popper-content-wrapper=""
+      dir="ltr"
+      style={{
+        position: "fixed",
+        left: 0,
+        top: 0,
+        transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+        transformOrigin: "top left",
+        minWidth: "max-content",
+        ['--radix-popper-transform-origin' as string]: '100% 0px',
+        willChange: "transform",
+        zIndex: 50,
+      }}
+    >
+      <div
+        id={menuId}
+        data-side="bottom"
+        data-align="end"
+        role="menu"
+        aria-orientation="vertical"
+        data-state={visible ? "open" : "closed"}
+        data-radix-menu-content=""
+        dir="ltr"
+        className="py-menu-content z-50 flex min-w-[8rem] w-[200px] flex-col gap-1 overflow-hidden rounded-[18px] bg-popover p-2 text-popover-foreground shadow-lg"
+        tabIndex={-1}
+        data-orientation="vertical"
+        style={{
+          outline: "none",
+          ['--radix-dropdown-menu-content-transform-origin' as string]: 'var(--radix-popper-transform-origin)',
+          pointerEvents: "auto",
+        }}
+      >
+        <div role="menuitem" className={itemClass} tabIndex={-1} data-orientation="vertical" data-radix-collection-item="">Duplicate</div>
+        <div role="menuitem" className={itemClass} tabIndex={-1} data-orientation="vertical" data-radix-collection-item="">Duplicate with Edges</div>
+        <div role="menuitem" className={itemClass} tabIndex={-1} data-orientation="vertical" data-radix-collection-item="">Lock</div>
+        <div role="menuitem" className={itemClass} tabIndex={-1} data-orientation="vertical" data-radix-collection-item="">Delete</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function GeminiPreviewNode() {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  return (
+    <div className="w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">
+      <div className="flex h-[59px] items-start justify-between border-b border-gray-100 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="w-full min-w-0 cursor-grab select-none truncate text-sm font-medium leading-5 text-gray-900">
+            Gemini 3.1 Pro
+          </div>
+        </div>
+        <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
+          <InfoTooltip
+            text="Generate text using Gemini 3.1 Pro (Google) via OpenRouter"
+            size={14}
+            className=""
+          />
+          <button className="nodrag rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40">
+            <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+          </button>
+          <button className="nodrag flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium leading-4 text-green-500 transition-all hover:bg-green-500/30">
+            <Play size={12} strokeWidth={2} className="h-3 w-3 fill-current" />
+            <span>Run</span>
+          </button>
+          <button
+            ref={menuButtonRef}
+            type="button"
+            id="node-menu-trigger"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            data-state={menuOpen ? "open" : "closed"}
+            onClick={() => setMenuOpen((open) => !open)}
+            className="nodrag inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-100"
+          >
+            <MoreHorizontal size={16} strokeWidth={2} className="h-4 w-4" />
+          </button>
+          <NodeMenu open={menuOpen} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />
+        </div>
+      </div>
+
+      <div className="px-4 py-4">
+        <div className="space-y-4">
+          <GeminiTextarea id="prompt" label="Prompt" required placeholder="Enter your prompt..." />
+          <GeminiTextarea id="system-prompt" label="System Prompt" placeholder="You are a helpful assistant..." />
+          <GeminiUpload id="image" label="Image (Vision)" buttonText="Upload Image" showRequirements />
+          <GeminiUpload id="video" label="Video" buttonText="Upload Video" />
+          <GeminiUpload id="audio" label="Audio" buttonText="Upload Audio" />
+        </div>
+
+        <div className="relative">
+          <button onClick={() => setSettingsOpen((open) => !open)} className="nodrag group mt-5 flex cursor-pointer items-center gap-2">
+            <ChevronDown size={16} strokeWidth={2} className={`h-4 w-4 text-gray-400 transition-transform ${settingsOpen ? "" : "-rotate-90"}`} />
+            <span className="text-xs text-gray-400 group-hover:text-gray-600">Settings</span>
+          </button>
+        </div>
+
+        {settingsOpen && <GeminiSettings />}
+
+        <div className="mt-4 border-t border-gray-100 pt-4">
+          <div className="relative overflow-visible">
+            <div className="absolute right-[-23px] top-2 z-50 flex -translate-y-1/2 items-center">
+              <Handle
+                id="response"
+                type="source"
+                position={Position.Right}
+                className="!relative !right-auto !top-auto !translate-x-0 !translate-y-0 !rounded-full !border-2"
+                style={{
+                  position: "relative",
+                  right: "auto",
+                  top: "auto",
+                  width: 14,
+                  height: 14,
+                  borderRadius: "50%",
+                  background: "#f59e0b",
+                  borderColor: "#f59e0b80",
+                  boxShadow: "#f59e0b50 0px 0px 8px",
+                  cursor: "crosshair",
+                  ['--handle-color' as string]: "#f59e0b",
+                }}
+              />
+            </div>
+            <div className="mb-1.5 text-xs font-normal leading-4 text-gray-500">Response</div>
+            <div className="min-h-[84px] rounded-lg border border-gray-200 bg-white p-3">
+              <div className="py-6 text-center text-xs leading-4 text-gray-400">No output yet</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-2 flex items-center justify-end gap-1.5 text-xs text-gray-400">
+          <Info size={12} strokeWidth={2} className="h-3 w-3" />
+          <span>~</span>
+          <Coins size={12} strokeWidth={2} className="h-3 w-3" />
+          <span>0.0001 M</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeminiTextarea({
+  id,
+  label,
+  required,
+  placeholder,
+}: {
+  id: string;
+  label: string;
+  required?: boolean;
+  placeholder: string;
+}) {
+  return (
+    <div className="relative">
+      <FieldHandle id={id} color="#f59e0b" />
+      <div className="mb-1.5 flex h-7 items-center text-xs font-normal leading-4 text-gray-500">
+        <span>{label}</span>
+        {required && <span className="text-red-400">*</span>}
+        <InfoTooltip text={label === "Prompt" ? "The message to send to the LLM" : "Instructions that define the model's behavior"} />
+        <span className="ml-auto">
+          <AddToRequestButton />
+        </span>
+      </div>
+      <div className="relative">
+        <textarea
+          rows={3}
+          placeholder={placeholder}
+          className="nodrag nowheel h-[86px] w-full resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] p-3 text-sm leading-5 text-gray-900 outline-none placeholder:text-gray-400 focus:border-gray-300"
+        />
+        <button type="button" title="Expand" className="nodrag absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-gray-200/80 text-gray-500 transition-colors hover:bg-gray-300 hover:text-gray-700">
+          <Maximize2 size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GeminiUpload({
+  id,
+  label,
+  buttonText,
+  showRequirements,
+}: {
+  id: string;
+  label: string;
+  buttonText: string;
+  showRequirements?: boolean;
+}) {
+  const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
+  const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  return (
+    <div className="relative">
+      <FieldHandle id={id} color="#3b82f6" top={12} />
+      <div className="flex items-start gap-3">
+        <div className="flex h-6 min-w-[96px] shrink-0 items-center text-xs font-normal leading-4 text-gray-500">
+          {label}
+        </div>
+        <div className="min-w-0 flex-1">
+          <button
+            ref={uploadButtonRef}
+            type="button"
+            tabIndex={-1}
+            title={`Upload ${buttonText.replace(/^Upload\s+/i, "").toLowerCase()}`}
+            onClick={() => setUploadPopoverOpen((open) => !open)}
+            data-state={uploadPopoverOpen ? "open" : "closed"}
+            className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
+          >
+            <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+            <span className="capitalize">{buttonText}</span>
+          </button>
+          <UploadPopover
+            open={uploadPopoverOpen}
+            anchorRef={uploadButtonRef}
+            onClose={() => setUploadPopoverOpen(false)}
+          />
+          {showRequirements && (
+            <div className="mt-1 flex items-center gap-1">
+              <InfoTooltip
+                text="Max images: 10"
+                className=""
+              />
+              <span className="text-[10px] text-gray-400">Upload requirements</span>
+            </div>
+          )}
+        </div>
+        <AddToRequestButton className="mt-1.5" />
+      </div>
+    </div>
+  );
+}
+
+function GeminiSettings() {
+  return (
+    <div className="mt-4 space-y-4 border-t border-gray-100 pt-4">
+      <GeminiSettingSlider label="Temperature" value="0.7" min="0" max="2" step="0.1" tooltip="Controls randomness of the generated response." />
+      <GeminiSettingNumber label="Max Tokens" value="1024" min="1" max="8192" tooltip="Maximum number of tokens to generate." />
+      <GeminiSettingBoolean label="Reasoning" tooltip="Enable or disable reasoning-oriented generation." />
+      <GeminiSettingSlider label="Top P" value="1" min="0" max="1" step="0.05" tooltip="Nucleus sampling threshold." />
+      <GeminiSettingSlider label="Top K" value="0" min="0" max="500" step="1" tooltip="Restrict sampling to the top K tokens." />
+      <GeminiSettingSlider label="Frequency Penalty" value="0" min="-2" max="2" step="0.1" tooltip="Penalizes tokens based on frequency so far." />
+      <GeminiSettingSlider label="Presence Penalty" value="0" min="-2" max="2" step="0.1" tooltip="Penalizes tokens already present in the text." />
+      <GeminiSettingSlider label="Repetition Penalty" value="1" min="0" max="2" step="0.05" tooltip="Discourages repetitive token selection." />
+      <GeminiSettingSlider label="Min P" value="0" min="0" max="1" step="0.05" tooltip="Minimum probability threshold for sampling." />
+      <GeminiSettingSlider label="Top A" value="0" min="0" max="1" step="0.05" tooltip="Alternative sampling threshold parameter." />
+      <GeminiSettingNumber label="Seed" value="0" min="0" step="1" tooltip="Set a fixed seed for more reproducible output." />
+      <GeminiSettingTextarea label="Stop Sequences" placeholder="e.g. END, STOP, ###" tooltip="Generation stops when any sequence matches." />
+      <GeminiSettingBoolean label="JSON Mode" tooltip="Force the model to respond with JSON." />
+    </div>
+  );
+}
+
+function GeminiSettingLabel({
+  label,
+  tooltip,
+}: {
+  label: string;
+  tooltip: string;
+}) {
+  return (
+    <span data-handle-anchor="label" className="flex min-w-0 shrink items-center truncate text-xs text-gray-500">
+      <HoverTooltip text={label} side="top" triggerClassName="min-w-0 truncate">
+        <span className="truncate">{label}</span>
+      </HoverTooltip>
+      <InfoTooltip text={tooltip} />
+    </span>
+  );
+}
+
+function GeminiSettingSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  min: string;
+  max: string;
+  step: string;
+  tooltip: string;
+}) {
+  const [currentValue, setCurrentValue] = useState(value);
+
+  return (
+    <div className="relative overflow-visible">
+      <FieldHandle id={`setting-${label}`} color="#ec4899" top={14} />
+      <div className="space-y-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <GeminiSettingLabel label={label} tooltip={tooltip} />
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={currentValue}
+            onChange={(event) => setCurrentValue(event.target.value)}
+            className="nodrag h-2 min-w-[60px] flex-1 appearance-none rounded-lg bg-gray-200 accent-workflow-accent-500 disabled:opacity-50"
+          />
+          <input
+            type="number"
+            min={min}
+            max={max}
+            value={currentValue}
+            onChange={(event) => setCurrentValue(event.target.value)}
+            className="nodrag w-12 shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1.5 py-1 text-center text-xs text-gray-900 outline-none disabled:opacity-50"
+          />
+          <ResetSettingButton />
+          <AddToRequestButton />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeminiSettingNumber({
+  label,
+  value,
+  min,
+  max,
+  step,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  min?: string;
+  max?: string;
+  step?: string;
+  tooltip: string;
+}) {
+  const [currentValue, setCurrentValue] = useState(value);
+
+  return (
+    <div className="relative overflow-visible">
+      <FieldHandle id={`setting-${label}`} color="#ec4899" top={14} />
+      <div className="space-y-1.5">
+        <div className="flex min-w-0 items-center gap-3">
+          <GeminiSettingLabel label={label} tooltip={tooltip} />
+          <input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={currentValue}
+            onChange={(event) => setCurrentValue(event.target.value)}
+            className="nodrag w-20 shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-center text-sm text-gray-900 outline-none focus:border-workflow-accent-500 disabled:opacity-50"
+          />
+          <ResetSettingButton />
+          <AddToRequestButton />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeminiSettingBoolean({
+  label,
+  tooltip,
+}: {
+  label: string;
+  tooltip: string;
+}) {
+  return (
+    <div className="relative flex min-w-0 items-center gap-3 overflow-visible">
+      <FieldHandle id={`setting-${label}`} color="#6366f1" top={14} />
+      <GeminiSettingLabel label={label} tooltip={tooltip} />
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="text-[10px] font-medium text-gray-600">False</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked="false"
+            data-state="unchecked"
+            value="on"
+            className="peer nodrag inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-gray-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=unchecked]:bg-input data-[state=checked]:bg-workflow-accent-500"
+          >
+            <span data-state="unchecked" className="pointer-events-none block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0" />
+          </button>
+          <span className="text-[10px] font-medium text-gray-400">True</span>
+        </div>
+        <AddToRequestButton />
+      </div>
+    </div>
+  );
+}
+
+function GeminiSettingTextarea({
+  label,
+  placeholder,
+  tooltip,
+}: {
+  label: string;
+  placeholder: string;
+  tooltip: string;
+}) {
+  return (
+    <div className="relative overflow-visible">
+      <FieldHandle id={`setting-${label}`} color="#f59e0b" top={14} />
+      <div className="mb-1.5 flex h-7 items-center text-xs text-gray-500">
+        <GeminiSettingLabel label={label} tooltip={tooltip} />
+        <span className="ml-auto">
+          <AddToRequestButton />
+        </span>
+      </div>
+      <textarea
+        rows={2}
+        placeholder={placeholder}
+        className="nodrag nowheel w-full resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] p-3 text-sm text-gray-900 outline-none focus:border-workflow-accent-500 disabled:opacity-50"
+      />
+    </div>
+  );
+}
+
+const nodeTypes = { geminiPreview: GeminiPreviewNode };
+
+const quickActions = [
+  { icon: Plus, label: "New task", shortcut: "CtrlShift+O" },
+  { icon: Search, label: "Search tasks", shortcut: "CtrlK" },
+];
+
+const mainNavItems = [
+  { icon: MessageSquareMore, label: "Tasks", href: "/app/chat/recent" },
+  { icon: FolderOpen, label: "Projects", href: "/app/chat/projects" },
+  { icon: Library, label: "Library", href: "/app/library" },
+  { icon: IconArrowsSplit, label: "Flow", href: "/app/flow" },
+  { icon: Boxes, label: "Tools", href: "/app/nodes" },
+  { icon: BookOpen, label: "API and MCP", href: "https://magica.com/docs" },
+];
+
+function Sidebar({
+  open,
+  setOpen,
+}: {
+  open: boolean;
+  setOpen: (v: boolean) => void;
+}) {
+  const navIconClass = "h-5 w-5 shrink-0 text-[#3d3d41]";
+  const navItemClass =
+    "chat-sidebar-nav-item group flex w-full items-center gap-[9px] overflow-clip rounded-lg p-2 text-sm font-normal leading-5 tracking-normal text-[#3d3d41] transition-colors hover:bg-[#dadada]";
+  const collapsedIconClass =
+    "inline-flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]";
+
+  return (
+    <div
+      className="chat-sidebar-shell relative flex h-full flex-shrink-0 flex-col overflow-hidden transition-all duration-200 ease-in-out"
+      style={{
+        width: open ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH,
+        backgroundColor: "rgb(240, 240, 240)",
+        borderRight: "0.5px solid rgb(224, 224, 226)",
+      }}
+    >
+      {/* 1. Shrunk state */}
+      <div
+        className={`group/sidebar h-full flex-col items-center ${open ? "hidden" : "flex visible"}`}
+        style={{ width: SIDEBAR_COLLAPSED_WIDTH }}
+      >
+        <button
+          onClick={() => setOpen(true)}
+          className="relative mb-6 mt-2 inline-flex h-9 w-9 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]"
+        >
+          <img
+            src="/favicon.ico"
+            alt="Magica"
+            className="h-5 w-5 object-contain transition-opacity group-hover/sidebar:opacity-0"
+          />
+          <PanelLeftOpen
+            size={20}
+            strokeWidth={2}
+            className="absolute text-[#3d3d41] opacity-0 transition-opacity group-hover/sidebar:opacity-100"
+          />
+        </button>
+
+        <div className="flex flex-col items-center gap-1">
+          {quickActions.map(({ icon: Icon, label }) => (
+            <button key={label} className={collapsedIconClass}>
+              <Icon size={20} strokeWidth={2} className={navIconClass} />
+            </button>
+          ))}
+          {mainNavItems.map(({ icon: Icon, label, href }) => {
+            const isTasks = label === "Tasks";
+            return (
+              <a key={label} href={href} className={collapsedIconClass}>
+                <Icon
+                  size={isTasks ? 18 : 20}
+                  strokeWidth={2}
+                  className={isTasks ? "h-[18px] w-[18px] shrink-0 text-[#3d3d41]" : navIconClass}
+                />
+              </a>
+            );
+          })}
+        </div>
+
+        <div className="mt-auto pb-4">
+          <button className="inline-flex h-8 w-8 shrink-0 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]">
+            <Settings size={16} strokeWidth={2} className="h-4 w-4 shrink-0 text-[#3d3d41]" />
+          </button>
+        </div>
+      </div>
+
+      {/* 2. Expanded state */}
+      <div
+        className={`h-full flex-col ${open ? "flex visible" : "hidden"}`}
+        style={{ width: SIDEBAR_EXPANDED_WIDTH }}
+      >
+        <div className="flex h-[52px] shrink-0 items-start justify-between px-4 pt-2">
+          <a href="/app" className="flex h-9 w-[104px] items-center">
+            <img
+              src="/galaxy.webp"
+              alt="Magica"
+              className="block h-[26px] w-[104px] object-contain"
+            />
+          </a>
+          <button
+            onClick={() => setOpen(false)}
+            className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]"
+          >
+            <PanelLeftClose size={20} strokeWidth={2} className="!h-5 !w-5" />
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-1 px-2 pb-1">
+          {quickActions.map(({ icon: Icon, label, shortcut }) => (
+            <button key={label} className={navItemClass}>
+              <span className="flex items-center gap-[9px]">
+                <Icon size={20} strokeWidth={2} className={navIconClass} />
+                <span className="truncate text-left">{label}</span>
+              </span>
+              <span className="text-[10px] font-normal leading-5 text-[#a3a3a7] opacity-0 transition-opacity group-hover:opacity-100">
+                {shortcut}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2 [scrollbar-width:thin]">
+          <div className="flex flex-col gap-1">
+            {mainNavItems.map(({ icon: Icon, label, href }) => {
+              const isTasks = label === "Tasks";
+              return (
+                <a key={label} href={href} className={navItemClass}>
+                  <span className="flex items-center gap-[9px]">
+                    <Icon
+                      size={isTasks ? 18 : 20}
+                      strokeWidth={2}
+                      className={isTasks ? "h-[18px] w-[18px] shrink-0 text-[#3d3d41]" : navIconClass}
+                    />
+                    <span className="truncate">{label}</span>
+                  </span>
+                </a>
+              );
+            })}
+          </div>
+          <div className="px-3 py-8 text-center text-sm font-normal leading-5 text-[#a3a3a7]">No tasks yet</div>
+        </div>
+
+        <div className="relative z-10 flex-shrink-0 bg-[rgb(240,240,240)] px-2">
+          <div className="transition-all duration-300 ease-in-out">
+            <button className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-[18px] border border-gray-200 bg-white px-3 text-xs font-medium leading-4 text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-900">
+              <Settings size={16} strokeWidth={2} className="h-4 w-4 shrink-0" />
+              <span>Settings</span>
+            </button>
+            <button className="relative mt-3 inline-flex h-9 w-full items-center justify-center gap-2 overflow-hidden rounded-[18px] bg-indigo-600/90 px-4 py-2 text-sm font-medium leading-5 text-white shadow-lg transition-all duration-300 before:absolute before:inset-0 before:translate-x-[-200%] before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent before:transition-transform before:duration-1000 before:ease-in-out hover:bg-indigo-700 hover:shadow-xl hover:before:translate-x-[200%]">
+              <Gift size={16} strokeWidth={2} className="h-4 w-4 shrink-0 text-[#3d3d41]" />
+              <span>Claim Offer</span>
+            </button>
+          </div>
+
+          <div className="border-t border-gray-200">
+            <button aria-label="Hide sidebar details" className="flex h-5 w-full items-center justify-center py-1 text-gray-400 transition-all hover:bg-gray-50 hover:text-gray-600">
+              <ChevronDown size={12} strokeWidth={2} className="h-3 w-3 text-[#3d3d41]" />
+            </button>
+            <div className="flex items-center justify-center px-4 py-2">
+              <button aria-label="Open user menu" className="cl-userButtonTrigger flex h-7 items-center justify-center rounded-md text-[13px] font-medium leading-[18px] text-[#212126]">
+                <span className="flex h-7 items-center gap-2">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-300 text-xs font-medium text-gray-600">
+                    R
+                  </span>
+                  <span className="block truncate pl-2 text-[13px] font-medium leading-[18px] text-black">
+                    Raunak Lanjewar
+                  </span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CanvasZoomKeyboardHandler() {
+  const { zoomIn, zoomOut } = useReactFlow();
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't hijack +/- while the user is typing in an input, textarea,
+      // or any contenteditable element (e.g. sidebar search, node fields).
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      if (isTyping) return;
+
+      // Handle +/- both with and without Cmd/Ctrl, and redirect them to
+      // canvas zoom instead of the browser's native page zoom. preventDefault()
+      // on keydown does stop native zoom in Chrome/Firefox for these keys —
+      // it's only OS-level pinch gestures that can't be intercepted via JS.
+      // (Safari's behavior on Cmd/Ctrl +/- specifically is less consistent
+      // across versions since it's tied to a native View-menu shortcut —
+      // verify on the Safari version you're targeting.)
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        zoomIn();
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomOut();
+      }
+    };
+
+    // Capture phase so this runs before any native shortcut handling has
+    // a chance to fire, rather than fighting it in the bubble phase.
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [zoomIn, zoomOut]);
+
+  return null;
+}
+
+type PickerGroup = {
+  label: "Utility" | "LLM Call";
+  items: Array<{
+    icon: React.ElementType;
+    label: string;
+  }>;
+};
+
+const pickerGroups: PickerGroup[] = [
+  {
+    label: "Utility",
+    items: [{ icon: Crop, label: "Crop Image" }],
+  },
+  {
+    label: "LLM Call",
+    items: [{ icon: Layers, label: "Gemini 3.1 Pro" }],
+  },
+];
+
+function CenterNodeToolbar({
+  onAddGemini,
+}: {
+  onAddGemini: () => void;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  return (
+    <div className="absolute bottom-[15px] left-1/2 z-20 -translate-x-1/2">
+      <div className="flex h-[46px] w-[86px] items-center gap-1 overflow-visible rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm">
+        <button className="rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900">
+          <StickyNote size={16} strokeWidth={2} className="h-4 w-4" />
+        </button>
+
+        <div className="relative h-8 w-8">
+          <button
+            type="button"
+            title="Add node"
+            onClick={() => setPickerOpen((open) => !open)}
+            className={`relative z-[70] rounded p-2 transition-colors ${
+              pickerOpen
+                ? "bg-gray-200 text-gray-900"
+                : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+            }`}
+          >
+            <Plus size={16} strokeWidth={2} className="h-4 w-4" />
+          </button>
+
+          {pickerOpen && (
+            <NodePicker
+              onClose={() => setPickerOpen(false)}
+              onAddGemini={() => {
+                onAddGemini();
+                setPickerOpen(false);
+              }}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NodePicker({
+  onClose,
+  onAddGemini,
+}: {
+  onClose: () => void;
+  onAddGemini: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [activeGroup, setActiveGroup] = useState<PickerGroup>(pickerGroups[0]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleGroups = pickerGroups
+    .map((group) => {
+      const groupMatches = group.label.toLowerCase().includes(normalizedQuery);
+      return {
+        ...group,
+        items:
+          !normalizedQuery || groupMatches
+            ? group.items
+            : group.items.filter((item) =>
+                item.label.toLowerCase().includes(normalizedQuery)
+              ),
+      };
+    })
+    .filter((group) => !normalizedQuery || group.items.length > 0);
+  const displayedGroup = normalizedQuery
+    ? visibleGroups.find((group) => group.label === activeGroup.label) ??
+      visibleGroups[0]
+    : activeGroup;
+  const activeItems = displayedGroup?.items ?? [];
+  const searchResults = visibleGroups.flatMap((group) =>
+    group.items.map((item) => ({ ...item, groupLabel: group.label }))
+  );
+
+  return (
+    <div
+      className="absolute left-0 z-[60] -translate-x-24"
+      style={{ bottom: "calc(100% + 14px)" }}
+    >
+      <div className="relative h-[430px] w-[529px]">
+        <div className="h-[430px] w-[280px] overflow-hidden rounded-2xl border border-gray-200 bg-white/95 shadow-2xl backdrop-blur">
+          <div className="p-2.5">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search
+                  size={16}
+                  strokeWidth={2}
+                  className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500"
+                />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search nodes or models..."
+                  className="h-[38px] w-full rounded-xl border border-transparent bg-transparent py-2 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-transparent focus:outline-none focus:ring-0"
+                />
+              </div>
+              <button
+                type="button"
+                title="Close"
+                onClick={onClose}
+                className="shrink-0 rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+              >
+                <X size={16} strokeWidth={2} className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="h-[370px] overflow-y-auto px-2 pb-2">
+            {normalizedQuery ? (
+              <>
+                <div className="px-2 py-1 text-[11px] font-normal leading-[16.5px] text-gray-500">
+                  Results
+                </div>
+                {searchResults.map(({ icon: Icon, label, groupLabel }) => (
+                  <button
+                    key={`${groupLabel}-${label}`}
+                    type="button"
+                    draggable
+                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : undefined}
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-gray-50"
+                  >
+                    <Icon size={20} strokeWidth={2} className="h-5 w-5 shrink-0 text-gray-700" />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm leading-5 text-gray-900">
+                        {label}
+                      </div>
+                      <div className="truncate text-[11px] leading-[16.5px] text-gray-500">
+                        Others • {groupLabel}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+                {searchResults.length === 0 && (
+                  <div className="px-2.5 py-2 text-[13px] leading-snug text-gray-400">
+                    No nodes found
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="pb-1">
+                <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase leading-[16.5px] tracking-wide text-gray-500">
+                  <Layers size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+                  Others
+                </div>
+                <div className="space-y-0">
+                  {visibleGroups.map((group) => (
+                    <button
+                      key={group.label}
+                      type="button"
+                      onMouseEnter={() => setActiveGroup(group)}
+                      onFocus={() => setActiveGroup(group)}
+                      onClick={() => setActiveGroup(group)}
+                      className={`flex w-full select-none items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50 ${
+                        displayedGroup?.label === group.label ? "bg-gray-50" : ""
+                      }`}
+                    >
+                      <span className="min-w-0 flex-1 text-[13px] leading-snug text-gray-700">
+                        {group.label}
+                      </span>
+                      <ChevronRight
+                        size={16}
+                        strokeWidth={2}
+                        className="h-4 w-4 shrink-0 text-gray-400"
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!normalizedQuery && (
+          <div className="absolute left-[286px] top-0 h-[430px] w-[237px] overflow-hidden rounded-2xl border border-gray-200 bg-white/95 shadow-2xl backdrop-blur">
+            <div className="p-2.5">
+              <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase leading-[16.5px] tracking-wide text-gray-500">
+                {displayedGroup?.label ?? "Results"}
+              </div>
+              <div className="space-y-0">
+                {activeItems.map(({ icon: Icon, label }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    draggable
+                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : undefined}
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50"
+                  >
+                    <Icon size={16} strokeWidth={2} className="h-4 w-4 text-gray-700" />
+                    <span className="truncate text-[13px] leading-snug text-gray-700">
+                      {label}
+                    </span>
+                  </button>
+                ))}
+                {activeItems.length === 0 && (
+                  <div className="px-2.5 py-1.5 text-[13px] leading-snug text-gray-400">
+                    No nodes found
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BottomToolbar() {
+  const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const { zoom } = useViewport();
+  const [collapsed, setCollapsed] = useState(false);
+
+  const noop = () => {};
+  const toolbarShellClass =
+    "absolute bottom-[15px] left-[15px] z-10 flex items-center gap-1 rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm";
+
+  if (collapsed) {
+    return (
+      <div className={toolbarShellClass}>
+        <ToolbarButton icon={ChevronRight} onClick={() => setCollapsed(false)} />
+      </div>
+    );
+  }
+
+  return (
+    <div className={toolbarShellClass}>
+      <ToolbarButton icon={ChevronLeft} onClick={() => setCollapsed(true)} />
+      <Divider />
+      <ToolbarButton icon={Undo2} onClick={noop} disabled />
+      <ToolbarButton icon={Redo2} onClick={noop} disabled />
+      <ToolbarButton icon={Command} onClick={noop} />
+      <Divider />
+      <ToolbarButton
+        icon={ZoomOut}
+        onClick={() => zoomOut()}
+        disabled={zoom <= MIN_ZOOM + 0.001}
+      />
+      <span className="min-w-[44px] select-none text-center text-xs font-medium leading-4 text-gray-500">
+        {Math.round(zoom * 100)}%
+      </span>
+      <ToolbarButton
+        icon={ZoomIn}
+        onClick={() => zoomIn()}
+        disabled={zoom >= MAX_ZOOM - 0.001}
+      />
+      <Divider />
+      <ToolbarButton icon={Maximize2} onClick={() => fitView()} />
+      <ToolbarButton icon={LayoutGrid} onClick={noop} />
+      <ToolbarButton icon={Move} onClick={noop} />
+    </div>
+  );
+}
+
+function ToolbarButton({
+  icon: Icon,
+  onClick,
+  disabled,
+}: {
+  icon: React.ElementType;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300"
+    >
+      <Icon size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+function Divider() {
+  return <div className="mx-0.5 h-5 w-px bg-gray-200" />;
+}
+
+export default function WorkflowCanvasPage() {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  const onConnect = useCallback(
+    (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
+    [setEdges]
+  );
+
+  const handleAddGemini = useCallback(() => {
+    setNodes((nds) => [
+      ...nds,
+      {
+        id: `gemini-${Date.now()}`,
+        type: "geminiPreview",
+        position: { x: 420, y: 120 },
+        data: {},
+      },
+    ]);
+  }, [setNodes]);
+
+  return (
+    <div className="flex h-screen w-full">
+      {/* <PromoTopbar /> */}
+      <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
+
+      <div className="relative flex-1">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          minZoom={MIN_ZOOM}
+          maxZoom={MAX_ZOOM}
+          fitView
+          // canvas background color, matched from reference screenshots (#f4f4f4)
+          style={{ backgroundColor: "#f4f4f4" }}
+        >
+          {/* dot grid: gap=30.5, size=2.5 (radius) */}
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={30.5}
+            size={2.5}
+            color="#cacaca"
+          />
+          <CanvasZoomKeyboardHandler />
+          <BottomToolbar />
+          <CenterNodeToolbar onAddGemini={handleAddGemini} />
+        </ReactFlow>
+      </div>
+    </div>
+  );
+}
