@@ -23,6 +23,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { createPortal } from "react-dom";
+import { getBezierPath } from "@xyflow/react";
+import type { ConnectionLineComponentProps, OnConnectEnd } from "@xyflow/react";
 import { IconAdjustmentsHorizontal, IconArrowsSplit, IconCloudUpload, IconLayout, IconLayoutGridFilled, IconLayoutList, IconUpload } from "@tabler/icons-react";
 import {
   Plus,
@@ -83,6 +85,7 @@ import {
   Video,
   File,
 } from "lucide-react";
+import { toast, Toaster } from "@/lib/toast";
 
 // ---- Zoom limits: canvas should only zoom between 10% and 200% ----
 const MIN_ZOOM = 0.1;
@@ -93,6 +96,59 @@ const SIDEBAR_COLLAPSED_WIDTH = 52; // measured
 const SIDEBAR_EXPANDED_WIDTH = 296;
 
 const PERMANENT_NODE_IDS = new Set(["request-inputs", "response"]);
+
+// ---- Handle Type System (colors match reference site exactly) ----
+const HANDLE_COLORS: Record<string, string> = {
+  text: "#f59e0b",
+  number: "#ec4899",
+  boolean: "#6366f1",
+  image: "#3b82f6",
+  audio: "#06b6d4",
+  video: "#22c55e",
+  media: "#086136",
+  file: "#a855f7",
+  result: "#6366f1",
+};
+
+function handleTypeFromId(handleId: string | null | undefined): string {
+  if (!handleId) return "text";
+  const h = handleId.toLowerCase().replace(/^in:/, "").replace(/^out:/, "").replace(/^field_/, "");
+  if (h === "result") return "result";
+  if (h === "prompt" || h === "system-prompt" || h === "system_prompt" || h.includes("prompt") || h.includes("text_field") || h.includes("system")) return "text";
+  if (h.includes("number") || h.includes("x_percent") || h.includes("y_percent") || h.includes("width") || h.includes("height")) return "number";
+  if (h.includes("bool")) return "boolean";
+  if (h.includes("image") || h === "img" || h === "input-image" || h === "output-image") return "image";
+  if (h.includes("audio")) return "audio";
+  if (h.includes("video")) return "video";
+  if (h.includes("media") || h.includes("avmedia")) return "media";
+  if (h.includes("file")) return "file";
+  return "text";
+}
+
+function areTypesCompatible(sourceType: string, targetType: string): boolean {
+  if (targetType === "result") return true;
+  return sourceType === targetType;
+}
+
+function wouldCreateCycle(edges: Edge[], source: string, target: string): boolean {
+  const adj: Record<string, string[]> = {};
+  for (const e of edges) {
+    if (!adj[e.source]) adj[e.source] = [];
+    adj[e.source].push(e.target);
+  }
+  if (!adj[source]) adj[source] = [];
+  adj[source].push(target);
+  const visited: Record<string, true> = {};
+  const stack = [target];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node === source) return true;
+    if (visited[node]) continue;
+    visited[node] = true;
+    for (const next of adj[node] ?? []) stack.push(next);
+  }
+  return false;
+}
 
 const initialNodes: Node[] = [
   {
@@ -1838,9 +1894,9 @@ function GeminiPreviewNode() {
         <div className="space-y-4">
           <GeminiTextarea id="prompt" label="Prompt" required placeholder="Enter your prompt..." />
           <GeminiTextarea id="system-prompt" label="System Prompt" placeholder="You are a helpful assistant..." />
-          <GeminiUpload id="image" label="Image (Vision)" buttonText="Upload Image" showRequirements />
-          <GeminiUpload id="video" label="Video" buttonText="Upload Video" />
-          <GeminiUpload id="audio" label="Audio" buttonText="Upload Audio" />
+          <GeminiUpload id="image" label="Image (Vision)" buttonText="Upload Image" showRequirements handleColor="#3b82f6" />
+          <GeminiUpload id="video" label="Video" buttonText="Upload Video" handleColor="#22c55e" />
+          <GeminiUpload id="audio" label="Audio" buttonText="Upload Audio" handleColor="#06b6d4" />
         </div>
 
         <div className="relative">
@@ -1939,11 +1995,13 @@ function GeminiUpload({
   label,
   buttonText,
   showRequirements,
+  handleColor,
 }: {
   id: string;
   label: string;
   buttonText: string;
   showRequirements?: boolean;
+  handleColor?: string;
 }) {
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
@@ -1965,7 +2023,7 @@ function GeminiUpload({
 
   return (
     <div className="relative">
-      <FieldHandle id={id} color="#3b82f6" top={12} />
+      <FieldHandle id={id} color={handleColor ?? "#3b82f6"} top={12} />
       <div className="flex items-start gap-3">
         <div className="flex h-6 min-w-[96px] shrink-0 items-center text-xs font-normal leading-4 text-gray-500">
           {label}
@@ -2873,8 +2931,13 @@ function BottomRightCanvasControls() {
         type="button"
         title={minimapButtonTitle}
         onClick={() => setMinimapOpen((open) => !open)}
-        className="absolute rounded-lg border border-gray-200 bg-white p-1.5 text-gray-500 shadow-sm transition-colors hover:bg-gray-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
-        style={minimapOpen ? { bottom: 172, right: 16, zIndex: 20 } : { bottom: 16, right: 75, zIndex: 20 }}
+        className="absolute rounded-lg border p-1.5 shadow-sm transition-colors hover:bg-[#f3f4f6] dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+        style={{
+          ...(minimapOpen ? { bottom: 172, right: 16, zIndex: 20 } : { bottom: 16, right: 75, zIndex: 20 }),
+          color: "#6b7280",
+          backgroundColor: "#ffffff",
+          borderColor: "#e5e7eb",
+        }}
       >
         {minimapOpen ? (
           <Minimize2 size={14} strokeWidth={2} className="lucide lucide-minimize2 lucide-minimize-2 h-3.5 w-3.5" />
@@ -2969,6 +3032,58 @@ function Divider() {
   return <div className="mx-0.5 h-5 w-px bg-gray-200" />;
 }
 
+function CustomConnectionLine({
+  fromX,
+  fromY,
+  toX,
+  toY,
+  fromPosition,
+  toPosition,
+  connectionStatus,
+  fromHandle,
+  toNode,
+}: ConnectionLineComponentProps) {
+  const handleId = fromHandle?.id;
+  const sourceType = handleTypeFromId(handleId);
+  const color = HANDLE_COLORS[sourceType] ?? "#f59e0b";
+  const [edgePath] = getBezierPath({
+    sourceX: fromX,
+    sourceY: fromY,
+    sourcePosition: fromPosition,
+    targetX: toX,
+    targetY: toY,
+    targetPosition: toPosition,
+  });
+  const invalid = connectionStatus === "invalid";
+  return (
+    <g>
+      <path
+        fill="none"
+        stroke={invalid ? "#ef4444" : color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeDasharray={invalid ? "5,5" : "none"}
+        d={edgePath}
+        style={{ opacity: 0.9 }}
+      />
+      {toNode !== null && (
+        <circle
+          cx={toX}
+          cy={toY}
+          r={6}
+          fill={invalid ? "#ef4444" : color}
+          fillOpacity={0.3}
+          stroke={invalid ? "#ef4444" : color}
+          strokeWidth={2}
+        >
+          <animate attributeName="r" values="4;8;4" dur="1s" repeatCount="indefinite" />
+          <animate attributeName="fillOpacity" values="0.5;0.2;0.5" dur="1s" repeatCount="indefinite" />
+        </circle>
+      )}
+    </g>
+  );
+}
+
 export default function WorkflowCanvasPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -2986,9 +3101,53 @@ export default function WorkflowCanvasPage() {
     [onNodesChangeBase],
   );
 
+  const isValidConnection = useCallback(
+    (connection: Edge | Connection) => {
+      const sourceType = handleTypeFromId(connection.sourceHandle);
+      const targetType = handleTypeFromId(connection.targetHandle);
+      if (!areTypesCompatible(sourceType, targetType)) return false;
+      if (connection.source === connection.target) return false;
+      if (wouldCreateCycle(edges, connection.source, connection.target)) return false;
+      return true;
+    },
+    [edges],
+  );
+
   const onConnect = useCallback(
-    (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
-    [setEdges]
+    (connection: Connection) => {
+      const sourceType = handleTypeFromId(connection.sourceHandle);
+      const targetType = handleTypeFromId(connection.targetHandle);
+      if (!areTypesCompatible(sourceType, targetType)) return;
+      if (connection.source === connection.target) return;
+      if (wouldCreateCycle(edges, connection.source, connection.target)) return;
+      const color = HANDLE_COLORS[sourceType] ?? "#f59e0b";
+      setEdges((eds) =>
+        addEdge(
+          { ...connection, style: { stroke: color, strokeWidth: 2 } },
+          eds,
+        ),
+      );
+    },
+    [setEdges, edges],
+  );
+
+  const onConnectEnd = useCallback<OnConnectEnd>(
+    (_event, connectionState) => {
+      if ("isValid" in connectionState && !connectionState.isValid && connectionState.toNode && connectionState.toHandle) {
+        const sourceType = handleTypeFromId(connectionState.fromHandle.id);
+        const targetType = handleTypeFromId(connectionState.toHandle.id);
+        let reason = "Invalid connection";
+        if (sourceType !== targetType) {
+          reason = `Cannot connect ${sourceType} output to ${targetType} input`;
+        } else if (connectionState.fromNode.id === connectionState.toNode.id) {
+          reason = "Cannot connect to the same node";
+        } else {
+          reason = "This connection would create a cycle";
+        }
+        toast({ description: reason });
+      }
+    },
+    [],
   );
 
   const handleAddGemini = useCallback(() => {
@@ -3029,6 +3188,7 @@ export default function WorkflowCanvasPage() {
 
   return (
     <ReactFlowProvider>
+      <Toaster />
       <div className="flex h-screen w-full">
         {/* <PromoTopbar /> */}
         <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
@@ -3041,6 +3201,10 @@ export default function WorkflowCanvasPage() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onConnectEnd={onConnectEnd}
+          isValidConnection={isValidConnection}
+          connectionLineComponent={CustomConnectionLine}
+
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
           // canvas background color, matched from reference screenshots (#f4f4f4)
