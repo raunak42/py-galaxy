@@ -343,6 +343,17 @@
     animation-name: exit;
     animation-fill-mode: forwards;
   }
+
+  .react-flow__minimap {
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  .react-flow__minimap-svg {
+    display: block;
+    width: 200px;
+    height: 150px;
+  }
 }
 
 @layer base {
