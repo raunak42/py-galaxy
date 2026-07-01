@@ -10,8 +10,10 @@ import {
   addEdge,
   useReactFlow,
   useViewport,
+  useInternalNode,
   Handle,
   Position,
+  NodeResizer,
   type Connection,
   type Edge,
   type Node,
@@ -48,6 +50,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Undo2,
   Redo2,
   Command,
@@ -1021,6 +1024,205 @@ function CropImageNode() {
   );
 }
 
+const STICKY_COLORS = [
+  { name: "Yellow", color: "#fef9c3" },
+  { name: "Blue", color: "#dbeafe" },
+  { name: "Green", color: "#dcfce7" },
+  { name: "Pink", color: "#fce7f3" },
+  { name: "Purple", color: "#f3e4ff" },
+  { name: "Orange", color: "#ffedd5" },
+] as const;
+
+const STICKY_FONTS = [
+  { name: "Sans", family: "sans-serif" },
+  { name: "Serif", family: "serif" },
+  { name: "Mono", family: "monospace" },
+  { name: "Cursive", family: "cursive" },
+] as const;
+
+function StickyNoteNode({ id, selected, data }: { id: string; selected: boolean; data: { color?: string; fontSize?: number; fontFamily?: string; bold?: boolean; text?: string } }) {
+  const [text, setText] = useState(data.text ?? "");
+  const [bgColor, setBgColor] = useState(data.color ?? STICKY_COLORS[0].color);
+  const [fontSize, setFontSize] = useState(data.fontSize ?? 24);
+  const [fontFamily, setFontFamily] = useState(data.fontFamily ?? "sans-serif");
+  const [isBold, setBold] = useState(data.bold ?? true);
+  const [focused, setFocused] = useState(false);
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const [toolbarPos, setToolbarPos] = useState({ top: -9999, left: -9999 });
+  const { x: vx, y: vy, zoom } = useViewport();
+  const internalNode = useInternalNode(id);
+  const w = internalNode?.measured?.width ?? 200;
+  const h = internalNode?.measured?.height ?? 200;
+  const px = internalNode?.internals.positionAbsolute.x ?? 0;
+  const py = internalNode?.internals.positionAbsolute.y ?? 0;
+
+  useLayoutEffect(() => {
+    if (!selected || !nodeRef.current) {
+      setToolbarPos({ top: -9999, left: -9999 });
+      return;
+    }
+    const rect = nodeRef.current.getBoundingClientRect();
+    setToolbarPos({ top: rect.top, left: rect.left + rect.width + 8 });
+  }, [selected, zoom, w, h, px, py, vx, vy]);
+
+  return (
+    <>
+      <div ref={nodeRef} className="relative" style={{ width: w, height: h }}>
+        <NodeResizer
+          minWidth={120}
+          minHeight={80}
+          isVisible={selected}
+          handleClassName="!w-2.5 !h-2.5 !bg-transparent !border-none"
+          lineClassName="!border-transparent"
+          color="transparent"
+        />
+        <div
+          className={`h-full w-full rounded-xl p-2.5 shadow-sm transition-shadow ${selected ? "" : "cursor-grab active:cursor-grabbing"}`}
+          style={{
+            backgroundColor: bgColor,
+            boxShadow: selected ? "#a3a3a3 0px 0px 0px 2px" : undefined,
+          }}
+        >
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            placeholder="Type a note..."
+            className="h-full w-full resize-none rounded-lg border-none p-3 leading-relaxed text-gray-800 outline-2 outline-offset-2 outline-transparent transition-colors placeholder:font-normal placeholder:text-gray-400/60 dark:text-gray-800 nodrag"
+            style={{
+              backgroundColor: focused ? "rgba(255, 255, 255, 0.58)" : "transparent",
+              boxShadow: focused ? "inset 0 0 0 1px rgba(255, 255, 255, 0.48)" : "none",
+              cursor: focused ? "text" : undefined,
+              fontFamily,
+              fontSize,
+              fontWeight: isBold ? 700 : 400,
+            }}
+          />
+        </div>
+      </div>
+      {selected && createPortal(
+        <div
+          style={{
+            position: "fixed",
+            left: 0,
+            top: 0,
+            transform: `translate(${toolbarPos.left}px, ${toolbarPos.top}px) scale(${zoom})`,
+            transformOrigin: "top left",
+            zIndex: 40,
+          }}
+        >
+          <StickyNoteToolbar
+            color={bgColor}
+            fontSize={fontSize}
+            fontFamily={fontFamily}
+            bold={isBold}
+            onColorChange={setBgColor}
+            onFontSizeChange={setFontSize}
+            onFontFamilyChange={setFontFamily}
+            onBoldChange={setBold}
+          />
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
+function StickyNoteToolbar({
+  color,
+  fontSize,
+  fontFamily,
+  bold,
+  onColorChange,
+  onFontSizeChange,
+  onFontFamilyChange,
+  onBoldChange,
+}: {
+  color: string;
+  fontSize: number;
+  fontFamily: string;
+  bold: boolean;
+  onColorChange: (color: string) => void;
+  onFontSizeChange: (size: number) => void;
+  onFontFamilyChange: (family: string) => void;
+  onBoldChange: (bold: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 rounded-xl border border-gray-200 bg-white p-1.5 shadow-lg">
+      <div className="flex flex-col gap-1">
+        {STICKY_COLORS.map(({ name, color: c }) => (
+          <button
+            key={name}
+            title={name}
+            onClick={() => onColorChange(c)}
+            className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${c === color ? "scale-110" : ""}`}
+            style={{ backgroundColor: c, borderColor: c === color ? "#000" : "transparent" }}
+          />
+        ))}
+      </div>
+
+      <div className="mx-0.5 h-px bg-[#e5e7eb]" />
+
+      <button
+        title={bold ? "Remove bold" : "Bold"}
+        onClick={() => onBoldChange(!bold)}
+        className={`flex h-6 w-6 items-center justify-center rounded-md text-xs transition-colors ${
+          bold
+            ? "bg-gray-800 text-white"
+            : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+        }`}
+      >
+        <span className="font-bold">B</span>
+      </button>
+
+      <div className="mx-0.5 h-px bg-[#e5e7eb]" />
+
+      <div className="flex flex-col items-center gap-0.5">
+        <button
+          title="Increase font size"
+          onClick={() => onFontSizeChange(Math.min(72, fontSize + 2))}
+          disabled={fontSize >= 72}
+          className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-100 text-xs text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          A+
+        </button>
+        <span className="select-none text-[9px] leading-none text-gray-500">
+          {fontSize}
+        </span>
+        <button
+          title="Decrease font size"
+          onClick={() => onFontSizeChange(Math.max(8, fontSize - 2))}
+          disabled={fontSize <= 8}
+          className="flex h-6 w-6 items-center justify-center rounded-md bg-gray-100 text-[10px] text-gray-600 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          A−
+        </button>
+      </div>
+
+      <div className="mx-0.5 h-px bg-[#e5e7eb]" />
+
+      <div className="flex flex-col gap-1">
+        {STICKY_FONTS.map(({ name, family }) => (
+          <button
+            key={name}
+            title={name}
+            onClick={() => onFontFamilyChange(family)}
+            className={`flex h-6 w-6 items-center justify-center rounded-md text-[10px] transition-colors ${
+              family === fontFamily
+                ? "bg-gray-800 text-white"
+                : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+            }`}
+            style={{ fontFamily: family }}
+          >
+            Aa
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CropImageUpload({ id, label, required }: { id: string; label: string; required?: boolean }) {
   return (
     <div className="relative">
@@ -1479,7 +1681,7 @@ function GeminiSettingTextarea({
   );
 }
 
-const nodeTypes = { geminiPreview: GeminiPreviewNode, cropImage: CropImageNode };
+const nodeTypes = { geminiPreview: GeminiPreviewNode, cropImage: CropImageNode, stickyNote: StickyNoteNode };
 
 const quickActions = [
   { icon: Plus, label: "New task", shortcut: "CtrlShift+O" },
@@ -1505,6 +1707,7 @@ function Sidebar({
   const [isMobileSidebar, setIsMobileSidebar] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < 768 : false,
   );
+  const [footerDetailsOpen, setFooterDetailsOpen] = useState(true);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -1641,20 +1844,35 @@ function Sidebar({
         </div>
 
         <div className="relative z-10 flex-shrink-0 bg-[rgb(240,240,240)] px-2">
-          <div className="transition-all duration-300 ease-in-out">
-            <button className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-[18px] border border-gray-200 bg-white px-3 text-xs font-medium leading-4 text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-900">
-              <Settings size={16} strokeWidth={2} className="h-4 w-4 shrink-0" />
-              <span>Settings</span>
-            </button>
-            <button className="relative mt-3 inline-flex h-9 w-full items-center justify-center gap-2 overflow-hidden rounded-[18px] bg-indigo-600/90 px-4 py-2 text-sm font-medium leading-5 text-white shadow-lg transition-all duration-300 before:absolute before:inset-0 before:translate-x-[-200%] before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent before:transition-transform before:duration-1000 before:ease-in-out hover:bg-indigo-700 hover:shadow-xl hover:before:translate-x-[200%]">
-              <Gift size={16} strokeWidth={2} className="h-4 w-4 shrink-0 text-[#3d3d41]" />
-              <span>Claim Offer</span>
-            </button>
+          <div
+            data-testid="sidebar-footer"
+            className={`overflow-hidden transition-all duration-300 ease-in-out ${footerDetailsOpen ? "max-h-[1000px] opacity-100" : "max-h-0 opacity-0"}`}
+          >
+            <div className="space-y-3" data-testid="auth-section">
+              <div className="relative w-full">
+                <button className="inline-flex h-8 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-[18px] border border-gray-200 bg-white px-3 text-xs font-medium leading-4 text-gray-600 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
+                  <Settings size={16} strokeWidth={2} className="h-3.5 w-3.5 shrink-0" />
+                  <span>Settings</span>
+                </button>
+              </div>
+              <button className="relative inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 overflow-hidden whitespace-nowrap rounded-[18px] bg-indigo-600/90 px-4 py-2 text-sm font-medium leading-5 text-white shadow-lg transition-all duration-300 before:absolute before:inset-0 before:translate-x-[-200%] before:bg-gradient-to-r before:from-transparent before:via-white/10 before:to-transparent before:transition-transform before:duration-1000 before:ease-in-out hover:bg-indigo-700 hover:shadow-xl hover:before:translate-x-[200%] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50">
+                <Gift size={16} strokeWidth={2} className="h-4 w-4 shrink-0 text-[#3d3d41]" />
+                <span>Claim Offer</span>
+              </button>
+            </div>
           </div>
 
           <div className="border-t border-gray-200">
-            <button aria-label="Hide sidebar details" className="flex h-5 w-full items-center justify-center py-1 text-gray-400 transition-all hover:bg-gray-50 hover:text-gray-600">
-              <ChevronDown size={12} strokeWidth={2} className="h-3 w-3 text-[#3d3d41]" />
+            <button
+              aria-label={footerDetailsOpen ? "Hide sidebar details" : "Show sidebar details"}
+              onClick={() => setFooterDetailsOpen((open) => !open)}
+              className="flex h-5 w-full items-center justify-center py-1 text-gray-400 transition-all hover:bg-gray-50 hover:text-gray-600"
+            >
+              {footerDetailsOpen ? (
+                <ChevronDown size={12} strokeWidth={2} className="h-3 w-3" />
+              ) : (
+                <ChevronUp size={12} strokeWidth={2} className="h-3 w-3" />
+              )}
             </button>
             <div className="flex items-center justify-center px-4 py-2">
               <button aria-label="Open user menu" className="cl-userButtonTrigger flex h-7 items-center justify-center rounded-md text-[13px] font-medium leading-[18px] text-[#212126]">
@@ -1727,7 +1945,7 @@ type PickerGroup = {
 const pickerGroups: PickerGroup[] = [
   {
     label: "Utility",
-    items: [{ icon: Crop, label: "Crop Image" }],
+    items: [{ icon: StickyNote, label: "Sticky Note" }, { icon: Crop, label: "Crop Image" }],
   },
   {
     label: "LLM Call",
@@ -1738,16 +1956,21 @@ const pickerGroups: PickerGroup[] = [
 function CenterNodeToolbar({
   onAddGemini,
   onAddCrop,
+  onAddStickyNote,
 }: {
   onAddGemini: () => void;
   onAddCrop: () => void;
+  onAddStickyNote: () => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
-    <div className="absolute bottom-[15px] left-1/2 z-20 -translate-x-1/2">
-      <div className="flex h-[46px] w-[86px] items-center gap-1 overflow-visible rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm">
-        <button className="rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900">
+    <div className="absolute bottom-[15px] left-1/2 z-[100] -translate-x-1/2">
+      <div className="flex h-[46px] items-center gap-1 overflow-visible rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm">
+        <button
+          onClick={onAddStickyNote}
+          className="rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900"
+        >
           <StickyNote size={16} strokeWidth={2} className="h-4 w-4" />
         </button>
 
@@ -1776,6 +1999,10 @@ function CenterNodeToolbar({
                 onAddCrop();
                 setPickerOpen(false);
               }}
+              onAddStickyNote={() => {
+                onAddStickyNote();
+                setPickerOpen(false);
+              }}
             />
           )}
         </div>
@@ -1788,10 +2015,12 @@ function NodePicker({
   onClose,
   onAddGemini,
   onAddCrop,
+  onAddStickyNote,
 }: {
   onClose: () => void;
   onAddGemini: () => void;
   onAddCrop: () => void;
+  onAddStickyNote: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [activeGroup, setActiveGroup] = useState<PickerGroup>(pickerGroups[0]);
@@ -1821,11 +2050,11 @@ function NodePicker({
 
   return (
     <div
-      className="absolute left-0 z-[60] -translate-x-24"
+      className="absolute left-0 z-[110] -translate-x-24"
       style={{ bottom: "calc(100% + 14px)" }}
     >
       <div className="relative h-[430px] w-[529px]">
-        <div className="h-[430px] w-[280px] overflow-hidden rounded-2xl border border-gray-200 bg-white/95 shadow-2xl backdrop-blur">
+        <div className="h-[430px] w-[280px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl backdrop-blur">
           <div className="p-2.5">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
@@ -1863,7 +2092,7 @@ function NodePicker({
                     key={`${groupLabel}-${label}`}
                     type="button"
                     draggable
-                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : label === "Crop Image" ? onAddCrop : undefined}
+                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : label === "Crop Image" ? onAddCrop : label === "Sticky Note" ? onAddStickyNote : undefined}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-gray-50"
                   >
                     <Icon size={20} strokeWidth={2} className="h-5 w-5 shrink-0 text-gray-700" />
@@ -1918,7 +2147,7 @@ function NodePicker({
         </div>
 
         {!normalizedQuery && (
-          <div className="absolute left-[286px] top-0 h-[430px] w-[237px] overflow-hidden rounded-2xl border border-gray-200 bg-white/95 shadow-2xl backdrop-blur">
+          <div className="absolute left-[286px] top-0 h-[430px] w-[237px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl backdrop-blur">
             <div className="p-2.5">
               <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium uppercase leading-[16.5px] tracking-wide text-gray-500">
                 {displayedGroup?.label ?? "Results"}
@@ -1929,7 +2158,7 @@ function NodePicker({
                     key={label}
                     type="button"
                     draggable
-                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : label === "Crop Image" ? onAddCrop : undefined}
+                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : label === "Crop Image" ? onAddCrop : label === "Sticky Note" ? onAddStickyNote : undefined}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50"
                   >
                     <Icon size={16} strokeWidth={2} className="h-4 w-4 text-gray-700" />
@@ -2155,6 +2384,18 @@ export default function WorkflowCanvasPage() {
     ]);
   }, [setNodes]);
 
+  const handleAddStickyNote = useCallback(() => {
+    setNodes((nds) => [
+      ...nds,
+      {
+        id: `sticky-${Date.now()}`,
+        type: "stickyNote",
+        position: { x: 420, y: 200 },
+        data: { color: "#fef9c3", fontSize: 24, fontFamily: "sans-serif", bold: true, text: "" },
+      },
+    ]);
+  }, [setNodes]);
+
   return (
     <div className="flex h-screen w-full">
       {/* <PromoTopbar /> */}
@@ -2170,7 +2411,6 @@ export default function WorkflowCanvasPage() {
           onConnect={onConnect}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
-          fitView
           // canvas background color, matched from reference screenshots (#f4f4f4)
           style={{ backgroundColor: "#f4f4f4" }}
         >
@@ -2186,7 +2426,7 @@ export default function WorkflowCanvasPage() {
           <TopRightCanvasControls />
           <BottomRightCanvasControls />
           <BottomToolbar />
-          <CenterNodeToolbar onAddGemini={handleAddGemini} onAddCrop={handleAddCrop} />
+          <CenterNodeToolbar onAddGemini={handleAddGemini} onAddCrop={handleAddCrop} onAddStickyNote={handleAddStickyNote} />
         </ReactFlow>
       </div>
     </div>
