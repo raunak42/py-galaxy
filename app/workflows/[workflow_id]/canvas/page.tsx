@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -75,6 +75,7 @@ import {
   CloudUpload,
   Sparkles,
   Heart,
+  Image,
   ImageIcon,
   ArrowUpDown,
   Folder,
@@ -1006,6 +1007,156 @@ function UploadPopover({
   );
 }
 
+type PickerMenuItem = {
+  key: string;
+  label: string;
+  icon?: ComponentType<{ className?: string; strokeWidth?: number }>;
+  onSelect?: () => void;
+};
+
+function FloatingPickerMenu({
+  open,
+  anchorRef,
+  onClose,
+  items,
+  width,
+  align = "start",
+  offset = 4,
+  scale = 1,
+  contentClassName,
+  itemClassName,
+}: {
+  open: boolean;
+  anchorRef: React.RefObject<HTMLElement | null>;
+  onClose: () => void;
+  items: PickerMenuItem[];
+  width: number;
+  align?: "start" | "end";
+  offset?: number;
+  scale?: number;
+  contentClassName: string;
+  itemClassName: string;
+}) {
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(open);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const menuId = useId();
+
+  const updatePosition = useCallback(() => {
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPosition({
+      x: align === "end" ? rect.right - width * scale : rect.left,
+      y: rect.bottom + offset * scale,
+    });
+  }, [align, anchorRef, offset, scale, width]);
+
+  useLayoutEffect(() => {
+    if (open) updatePosition();
+  }, [open, scale, updatePosition]);
+
+  useEffect(() => {
+    if (open) {
+      const frame = window.requestAnimationFrame(() => {
+        setMounted(true);
+        setVisible(true);
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    const frame = window.requestAnimationFrame(() => setVisible(false));
+    const timeout = window.setTimeout(() => setMounted(false), 150);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof globalThis.Node ? event.target : null;
+      if (!target) return;
+      if (anchorRef.current?.contains(target)) return;
+      const menu = document.getElementById(menuId);
+      if (menu?.contains(target)) return;
+      onClose();
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchorRef, menuId, onClose, open, updatePosition]);
+
+  if (!mounted || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      data-radix-popper-content-wrapper=""
+      dir="ltr"
+      style={{
+        position: "fixed",
+        left: 0,
+        top: 0,
+        transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
+        transformOrigin: "top left",
+        minWidth: "max-content",
+        willChange: "transform",
+        zIndex: 50,
+        ['--radix-popper-transform-origin' as string]: align === "end" ? "100% 0px" : "0px 0px",
+      }}
+    >
+      <div
+        id={menuId}
+        data-side="bottom"
+        data-align={align}
+        role="menu"
+        aria-orientation="vertical"
+        data-state={visible ? "open" : "closed"}
+        data-radix-menu-content=""
+        dir="ltr"
+        className={contentClassName}
+        tabIndex={-1}
+        data-orientation="vertical"
+        style={{
+          outline: "none",
+          ['--radix-dropdown-menu-content-transform-origin' as string]: 'var(--radix-popper-transform-origin)',
+          pointerEvents: "auto",
+        }}
+      >
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div
+              key={item.key}
+              role="menuitem"
+              className={itemClassName}
+              tabIndex={-1}
+              data-orientation="vertical"
+              data-radix-collection-item=""
+              onClick={() => {
+                item.onSelect?.();
+                onClose();
+              }}
+            >
+              {Icon ? (
+                <span className="text-gray-600 dark:text-zinc-400">
+                  <Icon strokeWidth={2} className="h-3.5 w-3.5" />
+                </span>
+              ) : null}
+              <span>{item.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function NodeMenu({
   open,
   anchorRef,
@@ -1016,104 +1167,26 @@ function NodeMenu({
   onClose: () => void;
 }) {
   const { zoom } = useViewport();
-  const [mounted, setMounted] = useState(open);
-  const [visible, setVisible] = useState(open);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const menuId = useId();
-
-  const updatePosition = useCallback(() => {
-    const rect = anchorRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setPosition({
-      x: rect.right - 200 * zoom,
-      y: rect.bottom + 4 * zoom,
-    });
-  }, [anchorRef, zoom]);
-
-  useLayoutEffect(() => {
-    if (open) updatePosition();
-  }, [open, zoom, updatePosition]);
-
-  useEffect(() => {
-    if (open) {
-      const timeout = window.setTimeout(() => {
-        setMounted(true);
-        setVisible(true);
-      }, 0);
-      return () => window.clearTimeout(timeout);
-    }
-    const timeout = window.setTimeout(() => {
-      setVisible(false);
-      window.setTimeout(() => setMounted(false), 150);
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as globalThis.Node;
-      if (anchorRef.current?.contains(target)) return;
-      const menu = document.getElementById(menuId);
-      if (menu?.contains(target)) return;
-      onClose();
-    };
-    window.addEventListener("pointerdown", handlePointerDown);
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [anchorRef, menuId, onClose, open, updatePosition]);
-
-  if (!mounted || typeof document === "undefined") return null;
-
   const itemClass =
-    "relative flex h-9 cursor-pointer select-none items-center gap-3 rounded-[14px] px-3.5 text-sm outline-none transition-colors hover:bg-accent focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0";
+    "relative flex h-9 cursor-pointer select-none items-center gap-3 rounded-[14px] px-3.5 text-sm outline-none transition-colors hover:bg-gray-200 hover:text-gray-950 focus:bg-gray-200 focus:text-gray-950 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0";
 
-  return createPortal(
-    <div
-      data-radix-popper-content-wrapper=""
-      dir="ltr"
-      style={{
-        position: "fixed",
-        left: 0,
-        top: 0,
-        transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
-        transformOrigin: "top left",
-        minWidth: "max-content",
-        ['--radix-popper-transform-origin' as string]: '100% 0px',
-        willChange: "transform",
-        zIndex: 50,
-      }}
-    >
-      <div
-        id={menuId}
-        data-side="bottom"
-        data-align="end"
-        role="menu"
-        aria-orientation="vertical"
-        data-state={visible ? "open" : "closed"}
-        data-radix-menu-content=""
-        dir="ltr"
-        className="py-menu-content z-50 flex min-w-[8rem] w-[200px] flex-col gap-1 overflow-hidden rounded-[18px] bg-popover p-2 text-popover-foreground shadow-lg"
-        tabIndex={-1}
-        data-orientation="vertical"
-        style={{
-          outline: "none",
-          ['--radix-dropdown-menu-content-transform-origin' as string]: 'var(--radix-popper-transform-origin)',
-          pointerEvents: "auto",
-        }}
-      >
-        <div role="menuitem" className={itemClass} tabIndex={-1} data-orientation="vertical" data-radix-collection-item="">Duplicate</div>
-        <div role="menuitem" className={itemClass} tabIndex={-1} data-orientation="vertical" data-radix-collection-item="">Duplicate with Edges</div>
-        <div role="menuitem" className={itemClass} tabIndex={-1} data-orientation="vertical" data-radix-collection-item="">Lock</div>
-        <div role="menuitem" className={itemClass} tabIndex={-1} data-orientation="vertical" data-radix-collection-item="">Delete</div>
-      </div>
-    </div>,
-    document.body,
+  return (
+    <FloatingPickerMenu
+      open={open}
+      anchorRef={anchorRef}
+      onClose={onClose}
+      width={200}
+      align="end"
+      scale={zoom}
+      contentClassName="py-menu-content z-50 flex min-w-[8rem] w-[200px] flex-col gap-1 overflow-hidden rounded-[18px] bg-popover p-2 text-popover-foreground shadow-lg"
+      itemClassName={itemClass}
+      items={[
+        { key: "duplicate", label: "Duplicate" },
+        { key: "duplicate-with-edges", label: "Duplicate with Edges" },
+        { key: "lock", label: "Lock" },
+        { key: "delete", label: "Delete" },
+      ]}
+    />
   );
 }
 
@@ -1164,7 +1237,7 @@ function LiveNodeHeader({
 }
 
 function LiveNodeShell({ children }: { children: ReactNode }) {
-  return <div className="w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">{children}</div>;
+  return <div className="py-node-shell w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">{children}</div>;
 }
 
 const FIELD_TOOLTIPS: Record<string, string> = {
@@ -1214,9 +1287,32 @@ function RequestFieldHeader({ label, canDelete = true }: { label: string; canDel
   );
 }
 
+function handleColorForFieldType(type: string): string {
+  const key = type.replace("_field", "");
+  return HANDLE_COLORS[key] ?? "#f59e0b";
+}
+
+function uploadLabelForFieldType(type: string): string | null {
+  if (type === "image_field") return "Upload image";
+  if (type === "audio_field") return "Upload audio";
+  if (type === "video_field") return "Upload video";
+  if (type === "media_field") return "Upload media";
+  if (type === "file_field") return "Upload file";
+  return null;
+}
+
+function uploadAcceptForFieldType(type: string): string {
+  if (type === "image_field") return "image/jpeg,image/jpg,image/png,image/webp,image/gif";
+  if (type === "audio_field") return "audio/*";
+  if (type === "video_field") return "video/*";
+  if (type === "media_field") return "audio/*,video/*";
+  if (type === "file_field") return "*/*";
+  return "image/*";
+}
+
 function RequestTextField({ id, label, value }: { id: string; label: string; value: string }) {
   return (
-    <div className="relative w-full">
+    <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
         <RequestFieldHeader label={label} />
         <div className="w-full min-w-0">
@@ -1225,7 +1321,8 @@ function RequestTextField({ id, label, value }: { id: string; label: string; val
               readOnly
               value={value}
               rows={3}
-              className="nodrag nowheel h-[78px] w-full min-w-0 resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm leading-5 text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
+              placeholder="Enter text..."
+              className="nodrag nowheel w-full min-w-0 resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
             />
             <button type="button" title="Expand" className="nodrag absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-gray-200/80 text-gray-500 transition-colors hover:bg-gray-300 hover:text-gray-700">
               <Maximize2 size={12} strokeWidth={2} className="h-3 w-3" />
@@ -1233,16 +1330,54 @@ function RequestTextField({ id, label, value }: { id: string; label: string; val
           </div>
         </div>
       </div>
-      <SourceFieldHandle id={id} color="#f59e0b" top={31} />
+      <SourceFieldHandle id={id} color={handleColorForFieldType("text_field")} top={31} />
     </div>
   );
 }
 
-function RequestImageField({ id, label }: { id: string; label: string }) {
+function RequestNumberField({ id, label }: { id: string; label: string }) {
+  return (
+    <div className="relative w-full" style={{ overflow: "visible" }}>
+      <div className="w-full min-w-0">
+        <RequestFieldHeader label={label} />
+        <div className="w-full min-w-0">
+          <input
+            type="number"
+            step="any"
+            defaultValue={0}
+            className="nodrag w-full min-w-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
+          />
+        </div>
+      </div>
+      <SourceFieldHandle id={id} color={handleColorForFieldType("number_field")} top={31} />
+    </div>
+  );
+}
+
+function RequestBooleanField({ id, label }: { id: string; label: string }) {
+  return (
+    <div className="relative w-full" style={{ overflow: "visible" }}>
+      <div className="w-full min-w-0">
+        <RequestFieldHeader label={label} />
+        <div className="w-full min-w-0">
+          <label className="nodrag flex cursor-pointer items-center gap-2">
+            <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-workflow-accent-500 focus:ring-workflow-accent-500 disabled:opacity-50" />
+            <span className="text-sm text-gray-700">False</span>
+          </label>
+        </div>
+      </div>
+      <SourceFieldHandle id={id} color={handleColorForFieldType("boolean_field")} top={31} />
+    </div>
+  );
+}
+
+function RequestUploadField({ id, label, type }: { id: string; label: string; type: string }) {
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
+  const uploadLabel = uploadLabelForFieldType(type)!;
+  const accept = uploadAcceptForFieldType(type);
 
   const handleUpload = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
@@ -1250,42 +1385,48 @@ function RequestImageField({ id, label }: { id: string; label: string }) {
   }, []);
 
   return (
-    <div className="relative w-full">
+    <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
         <RequestFieldHeader label={label} />
         <div className="w-full min-w-0">
-          <div className="min-w-0">
-            <div className="relative">
-              {uploadedUrl ? (
-                <div className="relative">
-                  <img src={uploadedUrl} alt="Uploaded preview" className="h-32 w-full rounded-lg border border-gray-200 object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      URL.revokeObjectURL(uploadedUrl);
-                      setUploadedUrl(null);
-                    }}
-                    className="nodrag absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
-                  >
-                    <X size={12} strokeWidth={2} className="h-3 w-3" />
-                  </button>
-                </div>
-              ) : (
-                <HoverTooltip text="Upload image" side="top" triggerClassName="block">
+          <div>
+            <div className="min-w-0">
+              <div className="relative">
+                {uploadedUrl ? (
+                  type === "image_field" ? (
+                    <div className="relative">
+                      <img src={uploadedUrl} alt="Uploaded preview" className="h-32 w-full rounded-lg border border-gray-200 object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          URL.revokeObjectURL(uploadedUrl);
+                          setUploadedUrl(null);
+                        }}
+                        className="nodrag absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                      >
+                        <X size={12} strokeWidth={2} className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-xs text-gray-500">
+                      File uploaded
+                    </div>
+                  )
+                ) : (
                   <button
                     ref={uploadButtonRef}
                     type="button"
                     tabIndex={-1}
-                    aria-label="Upload image"
+                    title={uploadLabel}
                     onClick={() => setUploadPopoverOpen((open) => !open)}
                     data-state={uploadPopoverOpen ? "open" : "closed"}
-                    className="nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed transition-colors disabled:opacity-50 nodrag border-gray-300 bg-white px-3 py-2.5 text-xs text-gray-500 hover:border-gray-400 hover:text-gray-700"
                   >
                     <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-                    <span className="capitalize">Upload image</span>
+                    <span className="capitalize">{uploadLabel}</span>
                   </button>
-                </HoverTooltip>
-              )}
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1297,11 +1438,11 @@ function RequestImageField({ id, label }: { id: string; label: string }) {
           onClose={() => setUploadPopoverOpen(false)}
           onSelectAsset={() => setAssetModalOpen(true)}
           onUpload={handleUpload}
-          accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+          accept={accept}
         />
       )}
       <MediaLibraryModal open={assetModalOpen} onClose={() => setAssetModalOpen(false)} />
-      <SourceFieldHandle id={id} color="#3b82f6" top={31} />
+      <SourceFieldHandle id={id} color={handleColorForFieldType(type)} top={31} />
     </div>
   );
 }
@@ -1310,7 +1451,7 @@ const FIELD_TYPE_ITEMS = [
   { type: "text_field", label: "Text", icon: AlignLeft },
   { type: "number_field", label: "Number", icon: Hash },
   { type: "boolean_field", label: "Boolean", icon: Check },
-  { type: "image_field", label: "Image", icon: ImageIcon },
+  { type: "image_field", label: "Image", icon: Image },
   { type: "audio_field", label: "Audio", icon: Music },
   { type: "video_field", label: "Video", icon: Video },
   { type: "media_field", label: "Media", icon: Music },
@@ -1318,88 +1459,43 @@ const FIELD_TYPE_ITEMS = [
 ];
 
 function FieldTypeMenu({ onSelect }: { onSelect: (type: string) => void }) {
+  const { zoom } = useViewport();
   const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
   const btnRef = useRef<HTMLButtonElement | null>(null);
-  const menuId = useId();
 
-  const show = useCallback(() => {
-    const rect = btnRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setPosition({ x: rect.right - 140, y: rect.bottom + 4 });
-    setMounted(true);
-    requestAnimationFrame(() => setOpen(true));
-  }, []);
-
-  const hide = useCallback(() => {
-    setOpen(false);
-    setTimeout(() => setMounted(false), 150);
-  }, []);
-
-  const select = useCallback((type: string) => {
-    setOpen(false);
-    setTimeout(() => {
-      setMounted(false);
-      onSelect(type);
-    }, 150);
-  }, [onSelect]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target instanceof Node ? e.target : null;
-      if (btnRef.current && target && !btnRef.current.contains(target)) {
-        const menuEl = document.getElementById(menuId);
-        if (menuEl && !menuEl.contains(target)) {
-          hide();
-        }
-      }
-    };
-    window.addEventListener("mousedown", handler, true);
-    return () => window.removeEventListener("mousedown", handler, true);
-  }, [open, hide, menuId]);
+  const close = useCallback(() => setOpen(false), []);
+  const items = FIELD_TYPE_ITEMS.map((item) => ({
+    key: item.type,
+    label: item.label,
+    icon: item.icon,
+    onSelect: () => onSelect(item.type),
+  }));
 
   return (
     <>
       <button
         ref={btnRef}
         type="button"
+        tabIndex={-1}
         aria-haspopup="menu"
         aria-expanded={open}
         data-state={open ? "open" : "closed"}
-        onClick={show}
+        onClick={() => setOpen((current) => !current)}
         className="nodrag flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 disabled:opacity-50"
       >
-        <Plus size={16} strokeWidth={2} className="h-4 w-4" />
+        <Plus size={24} strokeWidth={2} className="h-4 w-4" aria-hidden />
       </button>
-      {mounted &&
-        createPortal(
-          <div
-            id={menuId}
-            role="menu"
-            aria-orientation="vertical"
-            data-state={open ? "open" : "closed"}
-            className={`fixed z-50 min-w-[140px] overflow-hidden rounded-[18px] border border-gray-200 bg-white p-1 text-gray-700 shadow-lg transition-all duration-150 ${open ? "scale-100 opacity-100" : "scale-95 opacity-0"}`}
-            style={{ left: position.x, top: position.y }}
-          >
-            {FIELD_TYPE_ITEMS.map((item) => (
-              <div
-                key={item.type}
-                role="menuitem"
-                tabIndex={-1}
-                onClick={() => select(item.type)}
-                className="relative flex cursor-pointer select-none items-center gap-2 rounded-[18px] px-3 py-2 text-xs text-gray-700 outline-none transition-colors hover:bg-gray-100 focus:bg-gray-100"
-              >
-                <span className="text-gray-500">
-                  <item.icon size={14} strokeWidth={2} className="h-3.5 w-3.5" />
-                </span>
-                <span>{item.label}</span>
-              </div>
-            ))}
-          </div>,
-          document.body,
-        )}
+      <FloatingPickerMenu
+        open={open}
+        anchorRef={btnRef}
+        onClose={close}
+        width={140}
+        align="start"
+        scale={zoom}
+        contentClassName="z-50 w-[140px] min-w-[8rem] overflow-hidden rounded-[18px] border border-border/20 bg-popover p-1 text-popover-foreground shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
+        itemClassName="relative flex cursor-pointer select-none items-center gap-2 rounded-[18px] px-3 py-2 text-xs outline-none transition-colors hover:bg-gray-200 hover:text-gray-950 focus:bg-gray-200 focus:text-gray-950 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0"
+        items={items}
+      />
     </>
   );
 }
@@ -1419,25 +1515,36 @@ function RequestInputsNode() {
   }, []);
 
   return (
-    <div className="w-[380px] rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl">
-      <div className="flex h-[57px] items-center justify-between border-b border-gray-100 px-4 py-3">
+    <div
+      className="py-node-shell w-[380px] rounded-xl border border-gray-200 bg-white shadow-2xl"
+      style={{
+        overflow: "visible",
+        minWidth: 380,
+        width: 380,
+        backgroundColor: "rgb(255, 255, 255)",
+        color: "rgb(27, 27, 24)",
+        borderColor: "rgb(229, 231, 235)",
+      }}
+    >
+      <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
         <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium leading-5 text-gray-900">Request-Inputs</span>
+          <span className="text-sm font-medium text-gray-900">Request-Inputs</span>
           <InfoTooltip text="Define the input fields for your workflow. These become the request parameters when running via Playground or API." size={14} className="" maxWidth={280} />
         </div>
         <div className="flex items-center gap-1.5">
           <FieldTypeMenu onSelect={addField} />
         </div>
       </div>
-      <div className="relative w-full px-4 py-4">
+      <div className="relative w-full px-4 py-4" style={{ overflow: "visible", minWidth: 380 }}>
         <div className="w-full space-y-4">
-          {fields.map((f) =>
-            f.type === "image_field" ? (
-              <RequestImageField key={f.id} id={f.id} label={f.label} />
-            ) : (
-              <RequestTextField key={f.id} id={f.id} label={f.label} value="" />
-            ),
-          )}
+          {fields.map((f) => {
+            if (f.type === "number_field") return <RequestNumberField key={f.id} id={f.id} label={f.label} />;
+            if (f.type === "boolean_field") return <RequestBooleanField key={f.id} id={f.id} label={f.label} />;
+            if (f.type === "image_field" || f.type === "audio_field" || f.type === "video_field" || f.type === "media_field" || f.type === "file_field") {
+              return <RequestUploadField key={f.id} id={f.id} label={f.label} type={f.type} />;
+            }
+            return <RequestTextField key={f.id} id={f.id} label={f.label} value="" />;
+          })}
         </div>
       </div>
     </div>
@@ -1471,7 +1578,7 @@ function ResponseNode() {
     : [{ key: "default", label: "final_result" }];
 
   return (
-    <div className="w-[380px] rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">
+    <div className="py-node-shell w-[380px] rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300">
       <div className="flex h-[57px] items-center gap-3 border-b border-gray-100 px-4 py-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#6366f1]/10 text-[#6366f1]">
           <FileOutput size={16} strokeWidth={2} className="h-4 w-4" />
@@ -3150,6 +3257,31 @@ export default function WorkflowCanvasPage() {
     [],
   );
 
+  const selectOnlyNode = useCallback(
+    (nodeId: string | null) => {
+      setNodes((nds) => nds.map((node) => ({ ...node, selected: nodeId === null ? false : node.id === nodeId })));
+    },
+    [setNodes],
+  );
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      const nodeEl = target.closest(".react-flow__node");
+      if (nodeEl instanceof HTMLElement) {
+        const nodeId = nodeEl.getAttribute("data-id");
+        if (nodeId) selectOnlyNode(nodeId);
+        return;
+      }
+      if (!target.closest("[role='menu'], .react-flow__edge")) {
+        selectOnlyNode(null);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [selectOnlyNode]);
+
   const handleAddGemini = useCallback(() => {
     setNodes((nds) => [
       ...nds,
@@ -3202,6 +3334,8 @@ export default function WorkflowCanvasPage() {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onConnectEnd={onConnectEnd}
+          onNodeClick={(_, node) => selectOnlyNode(node.id)}
+          onPaneClick={() => selectOnlyNode(null)}
           isValidConnection={isValidConnection}
           connectionLineComponent={CustomConnectionLine}
 
