@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
@@ -19,7 +20,7 @@ import type { OnConnectEnd } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { toast, Toaster } from "@/lib/toast";
 import { MIN_ZOOM, MAX_ZOOM, PERMANENT_NODE_IDS, HANDLE_COLORS, handleTypeFromId, areTypesCompatible, wouldCreateCycle } from "./_lib/constants";
-import { initialNodes, initialEdges } from "./_lib/initial-workflow";
+import { initialNodes, initialEdges, sampleWorkflowNodes, sampleWorkflowEdges } from "./_lib/initial-workflow";
 import { cloneWorkflowSnapshot } from "./_lib/utils";
 import type { HistoryRunEntry, NodeOutputValues } from "./_lib/types";
 import { NodeValueContext, WorkflowEditContext, WorkflowRunContext, SelectionBoxNodeContext } from "./_lib/contexts";
@@ -40,6 +41,8 @@ function sanitizeNodeForPersistence(node: Node) {
   delete clean.resizing;
   delete clean.positionAbsolute;
   delete clean.internals;
+  delete clean.width;
+  delete clean.height;
   return clean;
 }
 
@@ -84,6 +87,7 @@ export default function WorkflowCanvasPage() {
   const [selectionBoxNodeIds, setSelectionBoxNodeIds] = useState<Set<string>>(() => new Set());
   const selectionBoxInProgressRef = useRef(false);
   const autoSaveInitializedRef = useRef(false);
+  const templateWorkflowRef = useRef(false);
   const autoSaveSequenceRef = useRef(0);
   const lastPersistedWorkflowSignatureRef = useRef<string | null>(null);
   const latestNodesRef = useRef(nodes);
@@ -179,7 +183,27 @@ export default function WorkflowCanvasPage() {
       try {
         const workflowResponse = await fetch(`/api/workflows/${workflowId}`, { cache: "no-store" });
         const workflowJson = await workflowResponse.json() as { workflow?: { nodes?: Node[]; edges?: Edge[]; nodeValues?: NodeOutputValues; undoStack?: Array<{ nodes: Node[]; edges: Edge[] }>; redoStack?: Array<{ nodes: Node[]; edges: Edge[] }> }; error?: string };
-        if (!workflowResponse.ok || !workflowJson.workflow) throw new Error(workflowJson.error ?? "Failed to load workflow");
+        if (!workflowResponse.ok || !workflowJson.workflow) {
+          templateWorkflowRef.current = true;
+          const loadedNodes = sampleWorkflowNodes;
+          const loadedEdges = sampleWorkflowEdges;
+          const loadedNodeValues = {};
+          setNodes(loadedNodes);
+          setEdges(loadedEdges);
+          setNodeValues(loadedNodeValues);
+          undoStackRef.current = [];
+          redoStackRef.current = [];
+          lastPersistedWorkflowSignatureRef.current = JSON.stringify(buildWorkflowPersistencePayload(
+            loadedNodes,
+            loadedEdges,
+            loadedNodeValues,
+            [],
+            [],
+          ));
+          refreshEditHistoryCounts();
+          setWorkflowLoaded(true);
+          return;
+        }
         const historyResponse = await fetch(`/api/workflows/${workflowId}/history`, { cache: "no-store" });
         const historyJson = await historyResponse.json() as { runs?: HistoryRunEntry[]; error?: string };
         if (!historyResponse.ok) throw new Error(historyJson.error ?? "Failed to load history");
@@ -223,6 +247,8 @@ export default function WorkflowCanvasPage() {
       return;
     }
 
+    if (templateWorkflowRef.current && workflowDirtyRevision === 0) return;
+
     const payload = buildPersistedWorkflowPayload();
     const signature = JSON.stringify(payload);
     if (signature === lastPersistedWorkflowSignatureRef.current) return;
@@ -234,25 +260,48 @@ export default function WorkflowCanvasPage() {
 
     const saveTimeout = window.setTimeout(() => {
       setAutoSaveStatus("saving");
-      void fetch(`/api/workflows/${workflowId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-        .then((response) => {
-          if (!response.ok) throw new Error("Failed to save workflow");
-          if (autoSaveSequenceRef.current !== sequence) return;
-          lastPersistedWorkflowSignatureRef.current = signature;
-          setAutoSaveStatus("saved");
-          dismissTimeout = window.setTimeout(() => {
-            if (autoSaveSequenceRef.current === sequence) setAutoSaveStatus(null);
-          }, 1500);
+      if (templateWorkflowRef.current) {
+        void fetch("/api/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, name: "Trial Task Workflow Copy" }),
         })
-        .catch(() => {
-          if (autoSaveSequenceRef.current !== sequence) return;
-          toast({ description: "Failed to save workflow" });
-          setAutoSaveStatus(null);
-        });
+          .then(async (response) => {
+            if (!response.ok) throw new Error("Failed to save workflow");
+            const result = await response.json() as { workflow?: { id: string } };
+            const newId = result.workflow?.id;
+            if (!newId) throw new Error("Failed to save workflow");
+            if (autoSaveSequenceRef.current !== sequence) return;
+            lastPersistedWorkflowSignatureRef.current = signature;
+            setAutoSaveStatus("saved");
+            window.location.href = `/app/flow/${newId}/canvas`;
+          })
+          .catch(() => {
+            if (autoSaveSequenceRef.current !== sequence) return;
+            toast({ description: "Failed to save workflow" });
+            setAutoSaveStatus(null);
+          });
+      } else {
+        void fetch(`/api/workflows/${workflowId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then((response) => {
+            if (!response.ok) throw new Error("Failed to save workflow");
+            if (autoSaveSequenceRef.current !== sequence) return;
+            lastPersistedWorkflowSignatureRef.current = signature;
+            setAutoSaveStatus("saved");
+            dismissTimeout = window.setTimeout(() => {
+              if (autoSaveSequenceRef.current === sequence) setAutoSaveStatus(null);
+            }, 1500);
+          })
+          .catch(() => {
+            if (autoSaveSequenceRef.current !== sequence) return;
+            toast({ description: "Failed to save workflow" });
+            setAutoSaveStatus(null);
+          });
+      }
     }, 1000);
 
     return () => {
@@ -263,17 +312,16 @@ export default function WorkflowCanvasPage() {
   }, [buildPersistedWorkflowPayload, workflowDirtyRevision, workflowId, workflowLoaded]);
 
   const setNodeHandleValue = useCallback((nodeId: string, handleId: string, value: unknown) => {
-    setNodeValues((current) => {
-      if (JSON.stringify(current[nodeId]?.[handleId]) === JSON.stringify(value)) return current;
-      return {
-        ...current,
-        [nodeId]: {
-          ...(current[nodeId] ?? {}),
-          [handleId]: value,
-        },
-      };
-    });
-    markWorkflowDirty();
+    const currentVal = latestNodeValuesRef.current[nodeId]?.[handleId];
+    if (JSON.stringify(currentVal) === JSON.stringify(value)) return;
+    setNodeValues((current) => ({
+      ...current,
+      [nodeId]: {
+        ...(current[nodeId] ?? {}),
+        [handleId]: value,
+      },
+    }));
+    if (currentVal !== undefined) markWorkflowDirty();
   }, [markWorkflowDirty]);
 
   const onNodesChange = useCallback(
@@ -441,6 +489,11 @@ export default function WorkflowCanvasPage() {
         <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
 
         <div className="relative flex-1 overflow-hidden">
+          {!workflowLoaded ? (
+            <div className="flex h-full items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-[#444444]" />
+            </div>
+          ) : (
           <NodeValueContext.Provider value={{ values: nodeValues, setNodeHandleValue }}>
           <WorkflowRunContext.Provider value={{ runningNodeIds, pendingNodeIds, runWorkflow, runSelectedNodes, cancelWorkflow, workflowRunning, selectedExecutableCount, addHistoryEntry, historyEntries, historyOpen, setHistoryOpen }}>
           <WorkflowEditContext.Provider value={{ undo, redo, recordSnapshot, canUndo, canRedo }}>
@@ -509,6 +562,7 @@ export default function WorkflowCanvasPage() {
           </WorkflowEditContext.Provider>
           </WorkflowRunContext.Provider>
           </NodeValueContext.Provider>
+          )}
         </div>
       </div>
     </ReactFlowProvider>
