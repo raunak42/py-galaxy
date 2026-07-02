@@ -5,7 +5,7 @@ import { Handle, Position } from "@xyflow/react";
 import { RotateCcw, MoreHorizontal, Info, Coins, ChevronDown } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { displayConnectedValue, valueToStringArray } from "../_lib/utils";
-import { useConnectedInputValue, useConnectedInputValues, useNodeValueContext, useWorkflowRunContext } from "../_lib/contexts";
+import { useConnectedInputValue, useConnectedInputValues, useNodeValueContext, useWorkflowEditContext, useWorkflowRunContext } from "../_lib/contexts";
 import { GeminiTextarea, GeminiUpload } from "./gemini-inputs";
 import { GeminiSettings } from "./gemini-settings";
 import { MagicaNodeRunButton, NodeMenu } from "./menus";
@@ -13,8 +13,16 @@ import { HoverTooltip, InfoTooltip } from "./tooltips";
 export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Record<string, unknown> }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [prompt, setPrompt] = useState(String(data?.prompt ?? ""));
-  const [systemPrompt, setSystemPrompt] = useState(String(data?.systemPrompt ?? ""));
+  const [prompt, setPromptState] = useState(String(data?.prompt ?? ""));
+  const [systemPrompt, setSystemPromptState] = useState(String(data?.systemPrompt ?? ""));
+  const setPrompt = useCallback((value: string) => {
+    recordSnapshot();
+    setPromptState(value);
+  }, [recordSnapshot]);
+  const setSystemPrompt = useCallback((value: string) => {
+    recordSnapshot();
+    setSystemPromptState(value);
+  }, [recordSnapshot]);
   const [response, setResponse] = useState("");
   const [runError, setRunError] = useState("");
   const [running, setRunning] = useState(false);
@@ -22,6 +30,7 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const { values, setNodeHandleValue } = useNodeValueContext();
   const { runningNodeIds, pendingNodeIds, addHistoryEntry } = useWorkflowRunContext();
+  const { recordSnapshot } = useWorkflowEditContext();
   const connectedPrompt = useConnectedInputValue(nodeId, "prompt");
   const connectedSystemPrompt = useConnectedInputValue(nodeId, "system-prompt");
   const connectedImage = useConnectedInputValues(nodeId, "image");
