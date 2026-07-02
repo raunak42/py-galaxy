@@ -6,7 +6,7 @@ import { Plus, GripVertical, Pencil, Copy, Trash2, X, Maximize2, Image, Check, A
 import { IconUpload } from "@tabler/icons-react";
 import { toast } from "@/lib/toast";
 import { HANDLE_COLORS } from "../_lib/constants";
-import { useNodeValueContext } from "../_lib/contexts";
+import { useNodeValueContext, useWorkflowEditContext } from "../_lib/contexts";
 import { SourceFieldHandle } from "./edges";
 import { InfoTooltip } from "./tooltips";
 import { MediaLibraryModal } from "./media-library";
@@ -83,12 +83,28 @@ export function uploadAcceptForFieldType(type: string): string {
 }
 
 export function RequestTextField({ nodeId, id, label, value, onRename, onDelete }: { nodeId: string; id: string; label: string; value: string; onRename?: () => void; onDelete?: () => void }) {
-  const [textValue, setTextValue] = useState(value);
-  const { setNodeHandleValue } = useNodeValueContext();
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [textValue, setTextValue] = useState(() => {
+    const stored = values[nodeId]?.[id];
+    return typeof stored === "string" ? stored : value;
+  });
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[id];
+    if (typeof stored === "string" && stored !== textValue) {
+      setTextValue(stored);
+    }
+  }, [id, nodeId, textValue, values]);
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, textValue);
   }, [id, nodeId, setNodeHandleValue, textValue]);
+
+  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    recordSnapshot();
+    setTextValue(e.target.value);
+  }, [recordSnapshot]);
 
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
@@ -98,7 +114,7 @@ export function RequestTextField({ nodeId, id, label, value, onRename, onDelete 
           <div className="relative">
             <textarea
               value={textValue}
-              onChange={(event) => setTextValue(event.target.value)}
+              onChange={handleTextChange}
               rows={3}
               placeholder="Enter text..."
               className="nodrag nopan nowheel w-full min-w-0 resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
@@ -115,12 +131,30 @@ export function RequestTextField({ nodeId, id, label, value, onRename, onDelete 
 }
 
 export function RequestNumberField({ nodeId, id, label, onRename, onDelete }: { nodeId: string; id: string; label: string; onRename?: () => void; onDelete?: () => void }) {
-  const [value, setValue] = useState("0");
-  const { setNodeHandleValue } = useNodeValueContext();
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [value, setValue] = useState(() => {
+    const stored = values[nodeId]?.[id];
+    if (stored !== undefined && stored !== null) return String(stored);
+    return "0";
+  });
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[id];
+    const storedStr = typeof stored === "number" ? String(stored) : typeof stored === "string" ? stored : null;
+    if (storedStr !== null && storedStr !== value) {
+      setValue(storedStr);
+    }
+  }, [id, nodeId, value, values]);
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, Number(value));
   }, [id, nodeId, setNodeHandleValue, value]);
+
+  const handleNumberChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    recordSnapshot();
+    setValue(e.target.value);
+  }, [recordSnapshot]);
 
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
@@ -131,7 +165,7 @@ export function RequestNumberField({ nodeId, id, label, onRename, onDelete }: { 
             type="number"
             step="any"
             value={value}
-            onChange={(event) => setValue(event.target.value)}
+            onChange={handleNumberChange}
             className="nodrag w-full min-w-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-sm text-gray-900 outline-none focus:border-[#6366f1] disabled:opacity-50"
           />
         </div>
@@ -142,12 +176,28 @@ export function RequestNumberField({ nodeId, id, label, onRename, onDelete }: { 
 }
 
 export function RequestBooleanField({ nodeId, id, label, onRename, onDelete }: { nodeId: string; id: string; label: string; onRename?: () => void; onDelete?: () => void }) {
-  const [checked, setChecked] = useState(false);
-  const { setNodeHandleValue } = useNodeValueContext();
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [checked, setChecked] = useState(() => {
+    const stored = values[nodeId]?.[id];
+    return typeof stored === "boolean" ? stored : false;
+  });
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[id];
+    if (typeof stored === "boolean" && stored !== checked) {
+      setChecked(stored);
+    }
+  }, [id, nodeId, checked, values]);
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, checked);
   }, [checked, id, nodeId, setNodeHandleValue]);
+
+  const handleBooleanChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    recordSnapshot();
+    setChecked(e.target.checked);
+  }, [recordSnapshot]);
 
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
@@ -155,7 +205,7 @@ export function RequestBooleanField({ nodeId, id, label, onRename, onDelete }: {
         <RequestFieldHeader label={label} onRename={onRename} onDelete={onDelete} />
         <div className="w-full min-w-0">
           <label className="nodrag flex cursor-pointer items-center gap-2">
-            <input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-workflow-accent-500 focus:ring-workflow-accent-500 disabled:opacity-50" />
+            <input type="checkbox" checked={checked} onChange={handleBooleanChange} className="h-4 w-4 rounded border-gray-300 text-workflow-accent-500 focus:ring-workflow-accent-500 disabled:opacity-50" />
             <span className="text-sm text-gray-700">{checked ? "True" : "False"}</span>
           </label>
         </div>
@@ -197,18 +247,30 @@ export function readFileAsDataUrl(file: File) {
 export function RequestUploadField({ nodeId, id, label, type, value = "", onRename, onDelete }: { nodeId: string; id: string; label: string; type: string; value?: string; onRename?: () => void; onDelete?: () => void }) {
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
-  const [uploadedUrl, setUploadedUrl] = useState<string | null>(value || null);
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(() => {
+    const stored = values[nodeId]?.[id];
+    return typeof stored === "string" && stored ? stored : (value || null);
+  });
   const [uploading, setUploading] = useState(false);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const uploadLabel = uploadLabelForFieldType(type)!;
   const accept = uploadAcceptForFieldType(type);
-  const { setNodeHandleValue } = useNodeValueContext();
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[id];
+    if (typeof stored === "string" && stored && stored !== uploadedUrl) {
+      setUploadedUrl(stored);
+    }
+  }, [id, nodeId, uploadedUrl, values]);
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, uploadedUrl ?? "");
   }, [id, nodeId, setNodeHandleValue, uploadedUrl]);
 
   const handleUpload = useCallback(async (file: File) => {
+    recordSnapshot();
     setUploading(true);
     try {
       const url = type === "image_field"
@@ -222,7 +284,7 @@ export function RequestUploadField({ nodeId, id, label, type, value = "", onRena
     } finally {
       setUploading(false);
     }
-  }, [type]);
+  }, [recordSnapshot, type]);
 
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
