@@ -78,6 +78,20 @@
     animation: node-pulse 1.5s ease-in-out infinite !important;
   }
 
+  @keyframes py-edge-ants {
+    from {
+      stroke-dashoffset: 0;
+    }
+    to {
+      stroke-dashoffset: -28;
+    }
+  }
+
+  .py-edge-ants {
+    stroke-dasharray: 10 8;
+    animation: py-edge-ants 0.75s linear infinite;
+  }
+
   .animate-fade-in {
     animation: fade-in 200ms ease-out both;
   }
@@ -100,6 +114,10 @@
 
   .bg-workflow-accent-500 {
     background-color: rgb(99, 102, 241);
+  }
+
+  .bg-workflow-accent-600 {
+    background-color: rgb(79, 70, 229);
   }
 
   .bg-input {

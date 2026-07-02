@@ -16,7 +16,10 @@ import {
   useInternalNode,
   Handle,
   Position,
+  SelectionMode,
   NodeResizer,
+  EdgeLabelRenderer,
+  type EdgeProps,
   type Connection,
   type Edge,
   type Node,
@@ -70,6 +73,7 @@ import {
   Maximize2,
   LayoutGrid,
   Move,
+  Square,
   ImagePlus,
   RefreshCw,
   CloudUpload,
@@ -138,14 +142,51 @@ type NodeValueContextValue = {
   setNodeHandleValue: (nodeId: string, handleId: string, value: unknown) => void;
 };
 
+type HistoryNodeDetail = {
+  nodeId: string;
+  label: string;
+  status: "success" | "failed";
+  durationMs: number;
+  inputs?: unknown;
+  output?: unknown;
+  error?: string;
+};
+
+type HistoryRunEntry = {
+  id: string;
+  timestamp: number;
+  status: "success" | "failed" | "partial";
+  durationMs: number;
+  scope: "full" | "partial" | "single";
+  nodeDetails: HistoryNodeDetail[];
+};
+
+type WorkflowEditContextValue = {
+  undo: () => void;
+  redo: () => void;
+  recordSnapshot: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+};
+
 type WorkflowRunContextValue = {
   runningNodeIds: Set<string>;
+  pendingNodeIds: Set<string>;
   runWorkflow: () => Promise<void>;
+  runSelectedNodes: (selectedIds?: string[]) => Promise<void>;
+  cancelWorkflow: () => void;
   workflowRunning: boolean;
+  selectedExecutableCount: number;
+  addHistoryEntry: (entry: Omit<HistoryRunEntry, "id" | "timestamp">) => void;
+  historyEntries: HistoryRunEntry[];
+  historyOpen: boolean;
+  setHistoryOpen: (open: boolean) => void;
 };
 
 const NodeValueContext = createContext<NodeValueContextValue | null>(null);
 const WorkflowRunContext = createContext<WorkflowRunContextValue | null>(null);
+const WorkflowEditContext = createContext<WorkflowEditContextValue | null>(null);
+const SelectionBoxNodeContext = createContext<Set<string>>(new Set<string>());
 
 function useNodeValueContext() {
   const context = useContext(NodeValueContext);
@@ -159,21 +200,73 @@ function useWorkflowRunContext() {
   return context;
 }
 
-function useConnectedInputValue(nodeId: string, handleId: string) {
-  const edges = useEdges();
-  const { values } = useNodeValueContext();
-  const edge = edges.find((item) => item.target === nodeId && item.targetHandle === handleId);
-  if (!edge) return { isConnected: false, value: undefined as unknown };
-  const sourceHandle = edge.sourceHandle ?? "result";
-  const sourceValues = values[edge.source] ?? {};
-  return { isConnected: true, value: sourceValues[sourceHandle] };
+function useWorkflowEditContext() {
+  const context = useContext(WorkflowEditContext);
+  if (!context) throw new Error("useWorkflowEditContext must be used inside WorkflowEditContext.Provider");
+  return context;
 }
 
-function displayConnectedValue(value: unknown) {
+function cloneWorkflowSnapshot(nodes: Node[], edges: Edge[]) {
+  return {
+    nodes: nodes.map((node) => ({ ...node, data: { ...(node.data ?? {}) }, position: { ...node.position } })),
+    edges: edges.map((edge) => ({ ...edge, data: edge.data ? { ...edge.data } : edge.data, style: edge.style ? { ...edge.style } : edge.style })),
+  };
+}
+
+function useConnectedInputValue(nodeId: string, handleId: string) {
+  const connected = useConnectedInputValues(nodeId, handleId);
+  return { isConnected: connected.isConnected, value: connected.values[0] };
+}
+
+function useConnectedInputValues(nodeId: string, handleId: string) {
+  const edges = useEdges();
+  const { values } = useNodeValueContext();
+  const matchedEdges = edges.filter((item) => item.target === nodeId && item.targetHandle === handleId);
+  return {
+    isConnected: matchedEdges.length > 0,
+    values: matchedEdges.map((edge) => {
+      const sourceHandle = edge.sourceHandle ?? "result";
+      const sourceValues = values[edge.source] ?? {};
+      return sourceValues[sourceHandle];
+    }),
+  };
+}
+
+function displayConnectedValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(displayConnectedValue).filter(Boolean).join(", ");
   return JSON.stringify(value);
+}
+
+function valueToStringArray(value: unknown): string[] {
+  if (value === null || value === undefined || value === "") return [];
+  if (Array.isArray(value)) return value.flatMap(valueToStringArray);
+  const text = displayConnectedValue(value);
+  return text ? [text] : [];
+}
+
+function isImageUrl(value: string) {
+  return value.startsWith("data:image/") || /^https?:\/\//i.test(value) && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value);
+}
+
+function nodeHistoryLabel(node: Node) {
+  if (node.id === "gemini-1") return "Gemini #1 — Product description";
+  if (node.id === "gemini-2") return "Gemini #2 — Tweet hook";
+  if (node.id === "gemini-final") return "Final Gemini — Marketing post";
+  if (node.id === "crop-1") return "Crop Image #1 — Product crop";
+  if (node.id === "crop-2") return "Crop Image #2 — Banner crop";
+  if (node.type === "geminiPreview") return "Gemini 3.1 Pro";
+  if (node.type === "cropImage") return "Crop Image";
+  if (node.type === "request") return "Request-Inputs";
+  if (node.type === "response") return "Response";
+  return String(node.type ?? node.id);
+}
+
+function formatDuration(ms: number) {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function wouldCreateCycle(edges: Edge[], source: string, target: string): boolean {
@@ -266,6 +359,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "text_field",
     target: "gemini-1",
     targetHandle: "prompt",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.text, strokeWidth: 2 },
   },
@@ -275,6 +369,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "image_field",
     target: "crop-1",
     targetHandle: "input-image",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
   },
@@ -284,6 +379,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "image_field",
     target: "crop-2",
     targetHandle: "input-image",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
   },
@@ -293,6 +389,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "response",
     target: "gemini-2",
     targetHandle: "prompt",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.text, strokeWidth: 2 },
   },
@@ -302,6 +399,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "response",
     target: "gemini-final",
     targetHandle: "prompt",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.text, strokeWidth: 2 },
   },
@@ -311,6 +409,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "output-image",
     target: "gemini-final",
     targetHandle: "image",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
   },
@@ -320,6 +419,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "output-image",
     target: "gemini-final",
     targetHandle: "image",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
   },
@@ -329,6 +429,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "response",
     target: "response",
     targetHandle: "result",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.text, strokeWidth: 2 },
   },
@@ -338,6 +439,7 @@ const initialEdges: Edge[] = [
     sourceHandle: "output-image",
     target: "response",
     targetHandle: "result",
+    type: "removable",
     animated: false,
     style: { stroke: HANDLE_COLORS.image, strokeWidth: 2 },
   },
@@ -416,6 +518,102 @@ function SourceFieldHandle({
     </div>
   );
 }
+
+function RemovableEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style,
+  markerEnd,
+  selected,
+  source,
+  target,
+}: EdgeProps) {
+  const [hovered, setHovered] = useState(false);
+  const { setEdges } = useReactFlow();
+  const selectionBoxNodeIds = useContext(SelectionBoxNodeContext);
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+  const stroke = typeof style?.stroke === "string" ? style.stroke : "#f59e0b";
+  const isConnectedToSelectionBoxNode = selectionBoxNodeIds.has(source) || selectionBoxNodeIds.has(target);
+  const shouldAnimate = Boolean(selected || isConnectedToSelectionBoxNode);
+  const strokeWidth = typeof style?.strokeWidth === "number" ? style.strokeWidth : 2;
+
+  return (
+    <>
+      <g
+        className="react-flow__edge-interaction"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        <path d={edgePath} fill="none" stroke="transparent" strokeWidth={20} style={{ cursor: "pointer" }} />
+        <path
+          d={edgePath}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          markerEnd={markerEnd}
+          style={{ opacity: shouldAnimate ? 0.18 : 0.8, pointerEvents: "none" }}
+        />
+        {shouldAnimate ? (
+          <path
+            d={edgePath}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            markerEnd={markerEnd}
+            strokeDasharray="10 3"
+            strokeDashoffset="0"
+            style={{ pointerEvents: "none" }}
+          >
+            <animate attributeName="stroke-dashoffset" from="0" to="-32" dur="0.8s" repeatCount="indefinite" />
+          </path>
+        ) : null}
+      </g>
+      {hovered && (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan absolute"
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={{
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: "all",
+              zIndex: 1000,
+            }}
+          >
+            <button
+              title="Delete connection"
+              onClick={(event) => {
+                event.stopPropagation();
+                setEdges((edges) => edges.filter((edge) => edge.id !== id));
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded-full border border-red-400 bg-red-500 text-xs font-bold text-white shadow-lg transition-colors hover:bg-red-600"
+            >
+              ×
+            </button>
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+const edgeTypes = {
+  removable: RemovableEdge,
+};
 
 function AddToRequestButton({ className = "" }: { className?: string }) {
   return (
@@ -1363,18 +1561,57 @@ function NodeMenu({
   );
 }
 
+type MagicaRunButtonState = "idle" | "running" | "pending" | "workflow-running" | "disabled" | "locked";
+
+function MagicaNodeRunButton({ state, onRun, onCancel, disabled }: { state: MagicaRunButtonState; onRun?: () => void; onCancel?: () => void; disabled?: boolean }) {
+  const isBusy = state === "running" || state === "pending" || state === "workflow-running";
+  const isHardDisabled = disabled || state === "locked" || state === "disabled" || state === "pending" || state === "workflow-running" || (state === "running" && !onCancel);
+  const label = state === "running" ? "Cancel" : state === "pending" ? "Pending" : state === "workflow-running" ? "Running" : "Run";
+  const className = [
+    "nodrag flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+    state === "running" ? "border border-red-500/30 bg-red-500/20 text-red-400 hover:bg-red-500/30" : "",
+    state === "locked" ? "cursor-not-allowed border border-amber-500/30 bg-amber-500/20 text-amber-400 opacity-60" : "",
+    state === "disabled" ? "cursor-not-allowed border border-gray-500/30 bg-gray-500/20 text-gray-400 opacity-60" : "",
+    state === "pending" ? "cursor-wait border border-yellow-500/30 bg-yellow-500/20 text-yellow-500 opacity-80" : "",
+    state === "workflow-running" ? "cursor-not-allowed border border-[rgba(99,102,241,0.3)] bg-[rgba(99,102,241,0.2)] text-[#818cf8] opacity-90" : "",
+    state === "idle" ? "cursor-pointer border border-green-500/30 bg-green-500/20 text-green-500 hover:bg-green-500/30" : "",
+  ].filter(Boolean).join(" ");
+
+  return (
+    <button
+      type="button"
+      disabled={isHardDisabled}
+      onClick={state === "running" ? onCancel : onRun}
+      className={className}
+    >
+      {isBusy ? <RefreshCw size={12} strokeWidth={2} className="h-3 w-3 animate-spin" /> : <Play size={12} strokeWidth={2} className="h-3 w-3 fill-current" />}
+      <span>{label}</span>
+    </button>
+  );
+}
+
 function LiveNodeHeader({
   title,
   tooltip,
   onMenuOpen,
   menuOpen,
   menuButtonRef,
+  onRun,
+  onCancel,
+  running = false,
+  pending = false,
+  runState,
 }: {
   title: string;
   tooltip: string;
   onMenuOpen: () => void;
   menuOpen: boolean;
   menuButtonRef: React.RefObject<HTMLButtonElement | null>;
+  onRun?: () => void;
+  onCancel?: () => void;
+  running?: boolean;
+  pending?: boolean;
+  runState?: MagicaRunButtonState;
 }) {
   return (
     <div className="flex h-[59px] items-start justify-between border-b border-gray-100 px-4 py-3">
@@ -1388,10 +1625,7 @@ function LiveNodeHeader({
         <button className="nodrag rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40">
           <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
         </button>
-        <button className="nodrag flex items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium leading-4 text-green-500 transition-all hover:bg-green-500/30">
-          <Play size={12} strokeWidth={2} className="h-3 w-3 fill-current" />
-          <span>Run</span>
-        </button>
+        <MagicaNodeRunButton state={runState ?? (running ? "running" : pending ? "pending" : onRun ? "idle" : "disabled")} onRun={onRun} onCancel={onCancel} disabled={!onRun} />
         <button
           ref={menuButtonRef}
           type="button"
@@ -1435,7 +1669,7 @@ function fieldTypeFromLabel(label: string): string {
   return "text_field";
 }
 
-function RequestFieldHeader({ label, canDelete = true }: { label: string; canDelete?: boolean }) {
+function RequestFieldHeader({ label, canDelete = true, onRename, onDelete }: { label: string; canDelete?: boolean; onRename?: () => void; onDelete?: () => void }) {
   const fieldType = fieldTypeFromLabel(label);
   const tooltipText = FIELD_TOOLTIPS[fieldType] ?? FIELD_TOOLTIPS.text_field;
   return (
@@ -1443,16 +1677,16 @@ function RequestFieldHeader({ label, canDelete = true }: { label: string; canDel
       <div className="nodrag nopan shrink-0 cursor-grab text-gray-400 hover:text-gray-600 active:cursor-grabbing">
         <GripVertical size={14} strokeWidth={2} className="h-3.5 w-3.5" />
       </div>
-      <span className="group/label flex min-w-0 flex-1 items-center gap-1 text-xs font-medium leading-4 text-gray-900 hover:text-[#6366f1]">
+      <button type="button" onClick={onRename} className="group/label flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left text-xs font-medium leading-4 text-gray-900 hover:text-[#6366f1]">
         <span className="truncate">{label}</span>
         <Pencil size={12} strokeWidth={2} className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover/label:opacity-100" />
         <InfoTooltip text={tooltipText} size={12} className="shrink-0 text-gray-400" maxWidth={200} />
-      </span>
+      </button>
       <div className="ml-auto flex items-center gap-1">
         <button type="button" title="Copy value" className="nodrag rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
           <Copy size={14} strokeWidth={2} className="h-3.5 w-3.5" />
         </button>
-        <button type="button" title="Delete" disabled={!canDelete} className="nodrag rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500 disabled:opacity-50">
+        <button type="button" title="Delete" disabled={!canDelete} onClick={onDelete} className="nodrag rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50">
           <Trash2 size={14} strokeWidth={2} className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -1483,7 +1717,7 @@ function uploadAcceptForFieldType(type: string): string {
   return "image/*";
 }
 
-function RequestTextField({ nodeId, id, label, value }: { nodeId: string; id: string; label: string; value: string }) {
+function RequestTextField({ nodeId, id, label, value, onRename, onDelete }: { nodeId: string; id: string; label: string; value: string; onRename?: () => void; onDelete?: () => void }) {
   const [textValue, setTextValue] = useState(value);
   const { setNodeHandleValue } = useNodeValueContext();
 
@@ -1494,7 +1728,7 @@ function RequestTextField({ nodeId, id, label, value }: { nodeId: string; id: st
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
-        <RequestFieldHeader label={label} />
+        <RequestFieldHeader label={label} onRename={onRename} onDelete={onDelete} />
         <div className="w-full min-w-0">
           <div className="relative">
             <textarea
@@ -1515,7 +1749,7 @@ function RequestTextField({ nodeId, id, label, value }: { nodeId: string; id: st
   );
 }
 
-function RequestNumberField({ nodeId, id, label }: { nodeId: string; id: string; label: string }) {
+function RequestNumberField({ nodeId, id, label, onRename, onDelete }: { nodeId: string; id: string; label: string; onRename?: () => void; onDelete?: () => void }) {
   const [value, setValue] = useState("0");
   const { setNodeHandleValue } = useNodeValueContext();
 
@@ -1526,7 +1760,7 @@ function RequestNumberField({ nodeId, id, label }: { nodeId: string; id: string;
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
-        <RequestFieldHeader label={label} />
+        <RequestFieldHeader label={label} onRename={onRename} onDelete={onDelete} />
         <div className="w-full min-w-0">
           <input
             type="number"
@@ -1542,7 +1776,7 @@ function RequestNumberField({ nodeId, id, label }: { nodeId: string; id: string;
   );
 }
 
-function RequestBooleanField({ nodeId, id, label }: { nodeId: string; id: string; label: string }) {
+function RequestBooleanField({ nodeId, id, label, onRename, onDelete }: { nodeId: string; id: string; label: string; onRename?: () => void; onDelete?: () => void }) {
   const [checked, setChecked] = useState(false);
   const { setNodeHandleValue } = useNodeValueContext();
 
@@ -1553,7 +1787,7 @@ function RequestBooleanField({ nodeId, id, label }: { nodeId: string; id: string
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
-        <RequestFieldHeader label={label} />
+        <RequestFieldHeader label={label} onRename={onRename} onDelete={onDelete} />
         <div className="w-full min-w-0">
           <label className="nodrag flex cursor-pointer items-center gap-2">
             <input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} className="h-4 w-4 rounded border-gray-300 text-workflow-accent-500 focus:ring-workflow-accent-500 disabled:opacity-50" />
@@ -1566,10 +1800,40 @@ function RequestBooleanField({ nodeId, id, label }: { nodeId: string; id: string
   );
 }
 
-function RequestUploadField({ nodeId, id, label, type }: { nodeId: string; id: string; label: string; type: string }) {
+async function uploadImageWithTransloadit(file: File) {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+
+  const response = await fetch("/api/transloadit/upload", {
+    method: "POST",
+    body: formData,
+  });
+  const json = await response.json() as { url?: string; error?: string };
+
+  if (!response.ok || !json.url) {
+    throw new Error(json.error ?? "Transloadit upload failed");
+  }
+
+  return json.url;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Could not read file"));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function RequestUploadField({ nodeId, id, label, type, onRename, onDelete }: { nodeId: string; id: string; label: string; type: string; onRename?: () => void; onDelete?: () => void }) {
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const uploadLabel = uploadLabelForFieldType(type)!;
   const accept = uploadAcceptForFieldType(type);
@@ -1579,21 +1843,35 @@ function RequestUploadField({ nodeId, id, label, type }: { nodeId: string; id: s
     setNodeHandleValue(nodeId, id, uploadedUrl ?? "");
   }, [id, nodeId, setNodeHandleValue, uploadedUrl]);
 
-  const handleUpload = useCallback((file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => setUploadedUrl(typeof reader.result === "string" ? reader.result : null);
-    reader.readAsDataURL(file);
-  }, []);
+  const handleUpload = useCallback(async (file: File) => {
+    setUploading(true);
+    try {
+      const url = type === "image_field"
+        ? await uploadImageWithTransloadit(file)
+        : await readFileAsDataUrl(file);
+      setUploadedUrl(url);
+      setUploadPopoverOpen(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Upload failed";
+      toast({ description: message });
+    } finally {
+      setUploading(false);
+    }
+  }, [type]);
 
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
-        <RequestFieldHeader label={label} />
+        <RequestFieldHeader label={label} onRename={onRename} onDelete={onDelete} />
         <div className="w-full min-w-0">
           <div>
             <div className="min-w-0">
               <div className="relative">
-                {uploadedUrl ? (
+                {uploading ? (
+                  <div className="flex items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-xs text-gray-500">
+                    Uploading to Transloadit…
+                  </div>
+                ) : uploadedUrl ? (
                   type === "image_field" ? (
                     <div className="relative">
                       <img src={uploadedUrl} alt="Uploaded preview" className="h-32 w-full rounded-lg border border-gray-200 object-cover" />
@@ -1619,8 +1897,9 @@ function RequestUploadField({ nodeId, id, label, type }: { nodeId: string; id: s
                     tabIndex={-1}
                     title={uploadLabel}
                     onClick={() => setUploadPopoverOpen((open) => !open)}
+                    disabled={uploading}
                     data-state={uploadPopoverOpen ? "open" : "closed"}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed transition-colors disabled:opacity-50 nodrag border-gray-300 bg-white px-3 py-2.5 text-xs text-gray-500 hover:border-gray-400 hover:text-gray-700"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed transition-colors disabled:cursor-not-allowed disabled:opacity-50 nodrag border-gray-300 bg-white px-3 py-2.5 text-xs text-gray-500 hover:border-gray-400 hover:text-gray-700"
                   >
                     <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
                     <span className="capitalize">{uploadLabel}</span>
@@ -1631,7 +1910,7 @@ function RequestUploadField({ nodeId, id, label, type }: { nodeId: string; id: s
           </div>
         </div>
       </div>
-      {!uploadedUrl && (
+      {!uploadedUrl && !uploading && (
         <UploadPopover
           open={uploadPopoverOpen}
           anchorRef={uploadButtonRef}
@@ -1708,14 +1987,30 @@ function RequestInputsNode({ id: nodeId, data }: { id: string; data?: Record<str
         { type: "image_field", id: "image_field", label: "image_field" },
       ];
   const [fields, setFields] = useState(initialFields);
+  const { setEdges } = useReactFlow();
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  const renameField = useCallback((fieldId: string, currentLabel: string) => {
+    const next = window.prompt("Rename field", currentLabel)?.trim();
+    if (!next) return;
+    recordSnapshot();
+    setFields((prev) => prev.map((field) => field.id === fieldId ? { ...field, label: next } : field));
+  }, [recordSnapshot]);
+
+  const deleteField = useCallback((fieldId: string) => {
+    recordSnapshot();
+    setFields((prev) => prev.filter((field) => field.id !== fieldId));
+    setEdges((current) => current.filter((edge) => !(edge.source === nodeId && edge.sourceHandle === fieldId)));
+  }, [nodeId, recordSnapshot, setEdges]);
 
   const addField = useCallback((type: string) => {
+    recordSnapshot();
     setFields((prev) => {
       const existing = prev.filter((f) => f.type === type);
       const id = existing.length === 0 ? type : `${type}_${existing.length + 1}`;
       return [...prev, { type, id, label: id }];
     });
-  }, []);
+  }, [recordSnapshot]);
 
   return (
     <div
@@ -1741,12 +2036,16 @@ function RequestInputsNode({ id: nodeId, data }: { id: string; data?: Record<str
       <div className="relative w-full px-4 py-4" style={{ overflow: "visible", minWidth: 380 }}>
         <div className="w-full space-y-4">
           {fields.map((f) => {
-            if (f.type === "number_field") return <RequestNumberField key={f.id} nodeId={nodeId} id={f.id} label={f.label} />;
-            if (f.type === "boolean_field") return <RequestBooleanField key={f.id} nodeId={nodeId} id={f.id} label={f.label} />;
+            const fieldActions = {
+              onRename: () => renameField(f.id, f.label),
+              onDelete: () => deleteField(f.id),
+            };
+            if (f.type === "number_field") return <RequestNumberField key={f.id} nodeId={nodeId} id={f.id} label={f.label} {...fieldActions} />;
+            if (f.type === "boolean_field") return <RequestBooleanField key={f.id} nodeId={nodeId} id={f.id} label={f.label} {...fieldActions} />;
             if (f.type === "image_field" || f.type === "audio_field" || f.type === "video_field" || f.type === "media_field" || f.type === "file_field") {
-              return <RequestUploadField key={f.id} nodeId={nodeId} id={f.id} label={f.label} type={f.type} />;
+              return <RequestUploadField key={f.id} nodeId={nodeId} id={f.id} label={f.label} type={f.type} {...fieldActions} />;
             }
-            return <RequestTextField key={f.id} nodeId={nodeId} id={f.id} label={f.label} value={f.value ?? ""} />;
+            return <RequestTextField key={f.id} nodeId={nodeId} id={f.id} label={f.label} value={f.value ?? ""} {...fieldActions} />;
           })}
         </div>
       </div>
@@ -1756,7 +2055,7 @@ function RequestInputsNode({ id: nodeId, data }: { id: string; data?: Record<str
 
 function ResponseOutputCard({ label, value }: { label: string; value: unknown }) {
   const textValue = displayConnectedValue(value);
-  const isImage = typeof textValue === "string" && (textValue.startsWith("data:image/") || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(textValue));
+  const isImage = isImageUrl(textValue);
 
   return (
     <div className="space-y-2 rounded-lg bg-[#F5F5F5] p-3">
@@ -1830,17 +2129,105 @@ function connectedManualInputClass(isConnected: boolean) {
 
 function CropImageNode({ id, data }: { id: string; data?: Record<string, unknown> }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const { runningNodeIds } = useWorkflowRunContext();
+  const [localRunning, setLocalRunning] = useState(false);
+  const [runError, setRunError] = useState("");
+  const runTokenRef = useRef(0);
+  const { runningNodeIds, pendingNodeIds, addHistoryEntry } = useWorkflowRunContext();
+  const { values, setNodeHandleValue } = useNodeValueContext();
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const connectedInput = useConnectedInputValue(id, "input-image");
+  const connectedX = useConnectedInputValue(id, "x-position");
+  const connectedY = useConnectedInputValue(id, "y-position");
+  const connectedWidth = useConnectedInputValue(id, "width");
+  const connectedHeight = useConnectedInputValue(id, "height");
+  const isRunning = localRunning || runningNodeIds.has(id);
+  const isPending = !isRunning && pendingNodeIds.has(id);
+  const outputImage = displayConnectedValue(values[id]?.["output-image"] ?? values[id]?.outputImageUrl);
+
+  const effectiveCropValue = useCallback((handle: string, connected: { isConnected: boolean; value: unknown }, fallback: unknown) => {
+    if (connected.isConnected) return displayConnectedValue(connected.value);
+    const manual = displayConnectedValue(values[id]?.[handle]);
+    return manual || displayConnectedValue(fallback);
+  }, [id, values]);
+
+  const runCrop = useCallback(async () => {
+    if (isRunning) return;
+    const startedAt = Date.now();
+    const inputImageUrl = effectiveCropValue("input-image", connectedInput, "");
+    const cropInputs = {
+      inputImageUrl,
+      x: Number(effectiveCropValue("x-position", connectedX, data?.x || 0)),
+      y: Number(effectiveCropValue("y-position", connectedY, data?.y || 0)),
+      width: Number(effectiveCropValue("width", connectedWidth, data?.width || 100)),
+      height: Number(effectiveCropValue("height", connectedHeight, data?.height || 100)),
+    };
+    if (!inputImageUrl) {
+      setRunError("Input Image is required");
+      toast({ description: "Input Image is required" });
+      return;
+    }
+
+    const runToken = runTokenRef.current + 1;
+    runTokenRef.current = runToken;
+    setLocalRunning(true);
+    setRunError("");
+    try {
+      const res = await fetch("/api/tasks/crop-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cropInputs),
+      });
+      const json = await res.json() as { output?: { outputImageUrl?: string }; error?: string; details?: { message?: string } | unknown };
+      if (!res.ok) {
+        const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
+        throw new Error(detailMessage ?? json.error ?? "Crop node failed");
+      }
+      if (runTokenRef.current !== runToken) return;
+      const url = json.output?.outputImageUrl ?? "";
+      setNodeHandleValue(id, "output-image", url);
+      setNodeHandleValue(id, "outputImageUrl", url);
+      addHistoryEntry({
+        scope: "single",
+        status: "success",
+        durationMs: Date.now() - startedAt,
+        nodeDetails: [{ nodeId: id, label: "Crop Image", status: "success", durationMs: Date.now() - startedAt, inputs: cropInputs, output: url }],
+      });
+    } catch (error) {
+      if (runTokenRef.current !== runToken) return;
+      const message = error instanceof Error ? error.message : "Crop node failed";
+      setRunError(message);
+      toast({ description: message });
+      addHistoryEntry({
+        scope: "single",
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        nodeDetails: [{ nodeId: id, label: "Crop Image", status: "failed", durationMs: Date.now() - startedAt, inputs: cropInputs, error: message }],
+      });
+    } finally {
+      if (runTokenRef.current === runToken) setLocalRunning(false);
+    }
+  }, [addHistoryEntry, connectedHeight, connectedInput, connectedWidth, connectedX, connectedY, data, effectiveCropValue, id, isRunning, setNodeHandleValue]);
+
+  const cancelCropRun = useCallback(() => {
+    runTokenRef.current += 1;
+    setLocalRunning(false);
+    setRunError("Run canceled");
+    toast({ description: "Run canceled" });
+  }, []);
 
   return (
-    <LiveNodeShell running={runningNodeIds.has(id)}>
+    <LiveNodeShell running={isRunning}>
       <LiveNodeHeader
         title="Crop Image"
         tooltip="Crop an image by percentage coordinates."
         menuOpen={menuOpen}
         menuButtonRef={menuButtonRef}
         onMenuOpen={() => setMenuOpen((open) => !open)}
+        onRun={runCrop}
+        running={isRunning}
+        pending={isPending}
+        runState={localRunning ? "running" : runningNodeIds.has(id) ? "workflow-running" : isPending ? "pending" : "idle"}
+        onCancel={cancelCropRun}
       />
       <NodeMenu open={menuOpen} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />
       <div className="px-4 py-4">
@@ -1876,8 +2263,16 @@ function CropImageNode({ id, data }: { id: string; data?: Record<string, unknown
               />
             </div>
             <div className="mb-1.5 text-xs font-normal leading-4 text-gray-500">Output Image</div>
-            <div className="flex h-10 items-center justify-center rounded border border-gray-200 bg-white">
-              <span className="text-xs text-gray-400">No output yet</span>
+            <div className="min-h-10 rounded border border-gray-200 bg-white p-2">
+              {isRunning ? (
+                <div className="flex h-8 items-center justify-center text-xs text-gray-400">Cropping image…</div>
+              ) : runError ? (
+                <div className="whitespace-pre-wrap text-xs leading-5 text-red-500">{runError}</div>
+              ) : outputImage ? (
+                <img src={outputImage} alt="Cropped output" className="max-h-40 w-full rounded object-contain" />
+              ) : (
+                <div className="flex h-8 items-center justify-center text-xs text-gray-400">No output yet</div>
+              )}
             </div>
           </div>
         </div>
@@ -2099,8 +2494,33 @@ function StickyNoteToolbar({
 }
 
 function CropImageUpload({ nodeId, id, label, required }: { nodeId: string; id: string; label: string; required?: boolean }) {
+  const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
+  const [assetModalOpen, setAssetModalOpen] = useState(false);
+  const [uploadedUrl, setUploadedUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const connected = useConnectedInputValue(nodeId, id);
   const isConnected = connected.isConnected;
+  const { setNodeHandleValue } = useNodeValueContext();
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, id, uploadedUrl);
+  }, [id, nodeId, setNodeHandleValue, uploadedUrl]);
+
+  const handleUpload = useCallback(async (file: File) => {
+    setUploading(true);
+    try {
+      const url = await uploadImageWithTransloadit(file);
+      setUploadedUrl(url);
+      setUploadPopoverOpen(false);
+    } catch (error) {
+      toast({ description: error instanceof Error ? error.message : "Upload failed" });
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
+  const displayValue = isConnected ? displayConnectedValue(connected.value) : uploadedUrl;
 
   return (
     <div className="relative">
@@ -2110,22 +2530,40 @@ function CropImageUpload({ nodeId, id, label, required }: { nodeId: string; id: 
           {label}{required && <span className="text-red-400">*</span>}
         </div>
         <div className="min-w-0 flex-1">
+          {displayValue && isImageUrl(displayValue) && (
+            <div className="mb-2">
+              <img src={displayValue} alt="Input preview" className="h-20 w-full rounded-lg border border-gray-200 object-cover" />
+            </div>
+          )}
           <HoverTooltip text="Upload image" side="top" triggerClassName="block">
             <button
+              ref={uploadButtonRef}
               type="button"
               tabIndex={-1}
               aria-label="Upload image"
-              disabled={isConnected}
+              disabled={isConnected || uploading}
+              onClick={() => setUploadPopoverOpen((open) => !open)}
               title={isConnected ? "Connected input — disconnect to enter manually" : "Upload image"}
               className={`nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700 disabled:pointer-events-none disabled:bg-gray-100 disabled:text-gray-400 ${connectedManualInputClass(isConnected)}`}
             >
               <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-              <span className="max-w-[180px] truncate">{isConnected ? displayConnectedValue(connected.value) || "Upload Image" : "Upload Image"}</span>
+              <span className="max-w-[180px] truncate">{uploading ? "Uploading to Transloadit…" : displayValue || "Upload Image"}</span>
             </button>
           </HoverTooltip>
         </div>
         <AddToRequestButton className="mt-1.5" />
       </div>
+      {!isConnected && !uploading && (
+        <UploadPopover
+          open={uploadPopoverOpen}
+          anchorRef={uploadButtonRef}
+          onClose={() => setUploadPopoverOpen(false)}
+          onSelectAsset={() => setAssetModalOpen(true)}
+          onUpload={handleUpload}
+          accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+        />
+      )}
+      <MediaLibraryModal open={assetModalOpen} onClose={() => setAssetModalOpen(false)} />
     </div>
   );
 }
@@ -2135,6 +2573,11 @@ function CropImageNumber({ nodeId, id, label, defaultValue }: { nodeId: string; 
   const connected = useConnectedInputValue(nodeId, id);
   const isConnected = connected.isConnected;
   const displayValue = isConnected ? displayConnectedValue(connected.value) : value;
+  const { setNodeHandleValue } = useNodeValueContext();
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, id, Number(value));
+  }, [id, nodeId, setNodeHandleValue, value]);
 
   const reset = () => setValue(defaultValue);
   const update = (next: string) => {
@@ -2202,15 +2645,21 @@ function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Record<str
   const [response, setResponse] = useState("");
   const [runError, setRunError] = useState("");
   const [running, setRunning] = useState(false);
+  const runTokenRef = useRef(0);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const { values, setNodeHandleValue } = useNodeValueContext();
-  const { runningNodeIds } = useWorkflowRunContext();
+  const { runningNodeIds, pendingNodeIds, addHistoryEntry } = useWorkflowRunContext();
   const connectedPrompt = useConnectedInputValue(nodeId, "prompt");
   const connectedSystemPrompt = useConnectedInputValue(nodeId, "system-prompt");
+  const connectedImage = useConnectedInputValues(nodeId, "image");
+  const connectedVideo = useConnectedInputValues(nodeId, "video");
+  const connectedAudio = useConnectedInputValues(nodeId, "audio");
+  const connectedFile = useConnectedInputValues(nodeId, "file");
   const effectivePrompt = connectedPrompt.isConnected ? displayConnectedValue(connectedPrompt.value) : prompt;
   const effectiveSystemPrompt = connectedSystemPrompt.isConnected ? displayConnectedValue(connectedSystemPrompt.value) : systemPrompt;
   const displayedResponse = response || displayConnectedValue(values[nodeId]?.response);
   const isNodeRunning = running || runningNodeIds.has(nodeId);
+  const isNodePending = !isNodeRunning && pendingNodeIds.has(nodeId);
 
   useEffect(() => {
     setNodeHandleValue(nodeId, "response", response);
@@ -2221,33 +2670,63 @@ function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Record<str
       setRunError("Prompt is required");
       return;
     }
+    const startedAt = Date.now();
+    const runToken = runTokenRef.current + 1;
+    runTokenRef.current = runToken;
     setRunning(true);
     setRunError("");
     setResponse("");
+    const geminiInputs = {
+      prompt: effectivePrompt,
+      systemPrompt: effectiveSystemPrompt.trim() || undefined,
+      imageUrls: connectedImage.isConnected ? connectedImage.values.flatMap(valueToStringArray) : valueToStringArray(values[nodeId]?.image),
+      videoUrls: connectedVideo.isConnected ? connectedVideo.values.flatMap(valueToStringArray) : valueToStringArray(values[nodeId]?.video),
+      audioUrls: connectedAudio.isConnected ? connectedAudio.values.flatMap(valueToStringArray) : valueToStringArray(values[nodeId]?.audio),
+      fileUrls: connectedFile.isConnected ? connectedFile.values.flatMap(valueToStringArray) : valueToStringArray(values[nodeId]?.file),
+      model: "gemini-3.1-pro",
+    };
     try {
       const res = await fetch("/api/tasks/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: effectivePrompt,
-          systemPrompt: effectiveSystemPrompt.trim() || undefined,
-          model: "gemini-3.1-pro",
-        }),
+        body: JSON.stringify(geminiInputs),
       });
       const json = await res.json() as { output?: { response?: string }; error?: string; details?: { message?: string } | unknown };
       if (!res.ok) {
         const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
         throw new Error(detailMessage ?? json.error ?? "Gemini run failed");
       }
-      setResponse(json.output?.response ?? "");
+      if (runTokenRef.current !== runToken) return;
+      const output = json.output?.response ?? "";
+      setResponse(output);
+      addHistoryEntry({
+        scope: "single",
+        status: "success",
+        durationMs: Date.now() - startedAt,
+        nodeDetails: [{ nodeId, label: "Gemini 3.1 Pro", status: "success", durationMs: Date.now() - startedAt, inputs: geminiInputs, output }],
+      });
     } catch (error) {
+      if (runTokenRef.current !== runToken) return;
       const message = error instanceof Error ? error.message : "Gemini run failed";
       setRunError(message);
       toast({ description: message });
+      addHistoryEntry({
+        scope: "single",
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        nodeDetails: [{ nodeId, label: "Gemini 3.1 Pro", status: "failed", durationMs: Date.now() - startedAt, inputs: geminiInputs, error: message }],
+      });
     } finally {
-      setRunning(false);
+      if (runTokenRef.current === runToken) setRunning(false);
     }
-  }, [effectivePrompt, effectiveSystemPrompt]);
+  }, [addHistoryEntry, connectedAudio.isConnected, connectedAudio.values, connectedFile.isConnected, connectedFile.values, connectedImage.isConnected, connectedImage.values, connectedVideo.isConnected, connectedVideo.values, effectivePrompt, effectiveSystemPrompt, nodeId, values]);
+
+  const cancelGeminiRun = useCallback(() => {
+    runTokenRef.current += 1;
+    setRunning(false);
+    setRunError("Run canceled");
+    toast({ description: "Run canceled" });
+  }, []);
 
   return (
     <div className={`py-node-shell w-[380px] max-w-[380px] overflow-visible rounded-xl border border-gray-200 bg-white text-[#1b1b18] shadow-2xl transition-all duration-300 ${isNodeRunning ? "node-running" : ""}`}>
@@ -2266,15 +2745,7 @@ function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Record<str
           <button className="nodrag rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40">
             <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
           </button>
-          <button
-            type="button"
-            disabled={isNodeRunning}
-            onClick={runGemini}
-            className="nodrag flex cursor-pointer items-center gap-1.5 rounded-md border border-green-500/30 bg-green-500/20 px-3 py-1.5 text-xs font-medium leading-4 text-green-500 transition-all hover:bg-green-500/30 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Play size={12} strokeWidth={2} className="h-3 w-3 fill-current" />
-            <span>{isNodeRunning ? "Running" : "Run"}</span>
-          </button>
+          <MagicaNodeRunButton state={running ? "running" : runningNodeIds.has(nodeId) ? "workflow-running" : isNodePending ? "pending" : "idle"} onRun={runGemini} onCancel={cancelGeminiRun} />
           <button
             ref={menuButtonRef}
             type="button"
@@ -2380,6 +2851,11 @@ function GeminiTextarea({
 }) {
   const connected = useConnectedInputValue(nodeId, id);
   const displayValue = connected.isConnected ? displayConnectedValue(connected.value) : value;
+  const { setNodeHandleValue } = useNodeValueContext();
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, id, value);
+  }, [id, nodeId, setNodeHandleValue, value]);
 
   return (
     <div className="relative">
@@ -2434,17 +2910,22 @@ function GeminiUpload({
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; url: string; file: File }[]>([]);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const connected = useConnectedInputValue(nodeId, id);
+  const connectedValues = useConnectedInputValues(nodeId, id);
   const isConnected = connected.isConnected;
+  const { setNodeHandleValue } = useNodeValueContext();
 
-  const handleUpload = useCallback((file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        setUploadedFiles((prev) => [...prev, { name: file.name, url: reader.result as string, file }]);
-      }
-    };
-    reader.readAsDataURL(file);
-  }, []);
+  useEffect(() => {
+    setNodeHandleValue(nodeId, id, uploadedFiles.map((file) => file.url));
+  }, [id, nodeId, setNodeHandleValue, uploadedFiles]);
+
+  const handleUpload = useCallback(async (file: File) => {
+    try {
+      const url = id === "image" ? await uploadImageWithTransloadit(file) : await readFileAsDataUrl(file);
+      setUploadedFiles((prev) => [...prev, { name: file.name, url, file }]);
+    } catch (error) {
+      toast({ description: error instanceof Error ? error.message : "Upload failed" });
+    }
+  }, [id]);
 
   const removeFile = useCallback((index: number) => {
     setUploadedFiles((prev) => {
@@ -2460,7 +2941,16 @@ function GeminiUpload({
           {label}
         </div>
         <div className="min-w-0 flex-1">
-          {uploadedFiles.length > 0 && (
+          {id === "image" && connectedValues.isConnected && connectedValues.values.flatMap(valueToStringArray).length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {connectedValues.values.flatMap(valueToStringArray).map((url, i) => (
+                <div key={`${url}-${i}`} className="group relative">
+                  <img src={url} alt={`Connected image ${i + 1}`} className="h-16 w-16 rounded-lg border border-gray-200 object-cover" />
+                </div>
+              ))}
+            </div>
+          )}
+          {uploadedFiles.length > 0 && !isConnected && (
             <div className="mb-2 flex flex-wrap gap-2">
               {uploadedFiles.map((f, i) => (
                 <div key={i} className="group relative">
@@ -2489,7 +2979,7 @@ function GeminiUpload({
               className={`nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700 disabled:pointer-events-none disabled:bg-gray-100 disabled:text-gray-400 ${connectedManualInputClass(isConnected)}`}
             >
               <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-              <span className="max-w-[180px] truncate capitalize">{isConnected ? displayConnectedValue(connected.value) || buttonText : buttonText}</span>
+              <span className="max-w-[180px] truncate capitalize">{isConnected ? `${connectedValues.values.flatMap(valueToStringArray).length || 1} connected ${id === "image" ? "image" : "input"}${(connectedValues.values.flatMap(valueToStringArray).length || 1) === 1 ? "" : "s"}` : buttonText}</span>
             </button>
           </HoverTooltip>
           {!isConnected && <UploadPopover
@@ -3322,8 +3812,548 @@ function TopLeftCanvasTitle() {
   );
 }
 
+function historyValueEntries(value: unknown): Array<{ key: string; value: unknown }> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [{ key: "value", value }];
+  return Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined && item !== null && item !== "").map(([key, item]) => ({ key, value: item }));
+}
+
+function prettyHistoryKey(key: string) {
+  return key
+    .replace(/Urls$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function isLikelyHistoryImage(key: string, value: unknown) {
+  if (typeof value !== "string") return false;
+  return value.startsWith("data:image/") || /^https?:\/\//i.test(value) || key.toLowerCase().includes("image") || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value);
+}
+
+function HistoryValueView({ value, title }: { value: unknown; title?: string }) {
+  const entries = historyValueEntries(value);
+
+  return (
+    <div className="space-y-2">
+      {entries.map((entry) => {
+        const values = Array.isArray(entry.value) ? entry.value : [entry.value];
+        return (
+          <div key={entry.key} className="rounded-lg border border-gray-100 bg-gray-50 p-2.5">
+            {title || entry.key !== "value" ? <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">{title ?? prettyHistoryKey(entry.key)}</div> : null}
+            <div className="space-y-2">
+              {values.length === 0 ? <div className="text-[11px] text-gray-400">No value captured.</div> : null}
+              {values.map((item, index) => {
+                if (isLikelyHistoryImage(entry.key, item)) {
+                  return (
+                    <div key={`${entry.key}-${index}`} className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+                      <img src={String(item)} alt={prettyHistoryKey(entry.key)} className="max-h-44 w-full object-contain" />
+                    </div>
+                  );
+                }
+                if (typeof item === "string" && /^https?:\/\//i.test(item)) {
+                  return <div key={`${entry.key}-${index}`} className="rounded-md bg-white px-2 py-1.5 text-[11px] text-gray-500">Uploaded file captured</div>;
+                }
+                const text = typeof item === "string" ? item : displayConnectedValue(item);
+                return <div key={`${entry.key}-${index}`} className="whitespace-pre-wrap break-words rounded-md bg-white px-2 py-1.5 text-[12px] leading-5 text-gray-700">{text || "No value captured."}</div>;
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ExecutionDependencyTree({
+  details,
+  graphEdges,
+  selectedNodeId,
+  onSelectNode,
+}: {
+  details: HistoryNodeDetail[];
+  graphEdges: Edge[];
+  selectedNodeId: string | null;
+  onSelectNode: (nodeId: string) => void;
+}) {
+  const detailById = new globalThis.Map(details.map((detail) => [detail.nodeId, detail]));
+  const detailOrder = new globalThis.Map(details.map((detail, index) => [detail.nodeId, index]));
+  const includedIds = new Set(details.map((detail) => detail.nodeId));
+  const parentMap = new globalThis.Map<string, string[]>();
+  const childMap = new globalThis.Map<string, string[]>();
+
+  for (const edge of graphEdges) {
+    if (!includedIds.has(edge.source) || !includedIds.has(edge.target)) continue;
+    parentMap.set(edge.target, [...(parentMap.get(edge.target) ?? []), edge.source]);
+    childMap.set(edge.source, [...(childMap.get(edge.source) ?? []), edge.target]);
+  }
+
+  const depthMemo = new globalThis.Map<string, number>();
+  const depthOf = (nodeId: string, visiting = new Set<string>()): number => {
+    const cached = depthMemo.get(nodeId);
+    if (cached !== undefined) return cached;
+    if (visiting.has(nodeId)) return 0;
+    visiting.add(nodeId);
+    const parents = parentMap.get(nodeId) ?? [];
+    const depth = parents.length === 0 ? 0 : Math.max(...parents.map((parentId) => depthOf(parentId, new Set(visiting)))) + 1;
+    depthMemo.set(nodeId, depth);
+    return depth;
+  };
+
+  const layers = details.reduce<Array<{ index: number; items: HistoryNodeDetail[] }>>((acc, detail) => {
+    const index = depthOf(detail.nodeId);
+    let layer = acc.find((item) => item.index === index);
+    if (!layer) {
+      layer = { index, items: [] };
+      acc.push(layer);
+    }
+    layer.items.push(detail);
+    return acc;
+  }, []).sort((a, b) => a.index - b.index).map((layer) => ({
+    ...layer,
+    items: layer.items.sort((a, b) => (detailOrder.get(a.nodeId) ?? 0) - (detailOrder.get(b.nodeId) ?? 0)),
+  }));
+
+  const signature = details.map((detail) => detail.nodeId).join("|");
+  const defaultExpandedLayers = new Set<number>();
+  const [expandedState, setExpandedState] = useState<{ signature: string; layers: Set<number> }>(() => ({ signature, layers: defaultExpandedLayers }));
+  const expandedLayers = expandedState.signature === signature ? expandedState.layers : defaultExpandedLayers;
+
+  const toggleLayer = (index: number) => {
+    setExpandedState((current) => {
+      const base = current.signature === signature ? current.layers : defaultExpandedLayers;
+      const next = new Set(base);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return { signature, layers: next };
+    });
+  };
+
+  const layerKind = (layer: { index: number; items: HistoryNodeDetail[] }, arrayIndex: number) => {
+    const hasMerge = layer.items.some((detail) => (parentMap.get(detail.nodeId) ?? []).length > 1);
+    if (arrayIndex === 0) return "Inputs";
+    if (arrayIndex === layers.length - 1) return "Output";
+    if (hasMerge) return "Merge point";
+    if (layer.items.length > 1) return "Parallel fan-out";
+    return "Sequential step";
+  };
+
+  const statusDotClass = (status: HistoryNodeDetail["status"]) => status === "success" ? "bg-emerald-500" : "bg-red-500";
+
+  const formatLayerDuration = (items: HistoryNodeDetail[]) => {
+    if (items.length === 0) return "0ms";
+    const elapsed = Math.max(...items.map((item) => item.durationMs));
+    return items.length > 1 ? `≈ ${formatDuration(elapsed)}` : formatDuration(elapsed);
+  };
+
+  const totalNodes = layers.reduce((count, layer) => count + layer.items.length, 0);
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold text-gray-900">Execution layers</div>
+          <div className="mt-1 text-[11px] leading-4 text-gray-500">Topological run order. Nodes in the same layer are eligible to run together.</div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span className="rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600">DAG</span>
+          <span className="text-[10px] text-gray-400">{layers.length} layers · {totalNodes} nodes</span>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {layers.map((layer, arrayIndex) => {
+          const expanded = expandedLayers.has(layer.index);
+          const kind = layerKind(layer, arrayIndex);
+          const isParallel = layer.items.length > 1;
+          return (
+            <div key={layer.index} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+              <button
+                type="button"
+                onClick={() => toggleLayer(layer.index)}
+                className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left transition hover:bg-gray-50"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-900 text-[11px] font-semibold text-white shadow-sm">
+                  {arrayIndex + 1}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-gray-900">Layer {arrayIndex + 1}</span>
+                    {isParallel ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600">parallel</span> : null}
+                  </div>
+                  <div className="mt-0.5 truncate text-[11px] text-gray-500">{kind} · {layer.items.length} node{layer.items.length === 1 ? "" : "s"}</div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] font-medium tabular-nums text-gray-500">{formatLayerDuration(layer.items)}</span>
+                  <ChevronDown size={14} strokeWidth={2} className={`h-3.5 w-3.5 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                </div>
+              </button>
+
+              {expanded ? (
+                <div className="border-t border-gray-100 bg-gray-50/70 px-3 py-2">
+                  <div className="space-y-2">
+                    {layer.items.map((detail) => {
+                      const parents = (parentMap.get(detail.nodeId) ?? [])
+                        .map((parentId) => detailById.get(parentId))
+                        .filter((parent): parent is HistoryNodeDetail => Boolean(parent));
+                      const children = (childMap.get(detail.nodeId) ?? [])
+                        .map((childId) => detailById.get(childId))
+                        .filter((child): child is HistoryNodeDetail => Boolean(child));
+                      const selected = detail.nodeId === selectedNodeId;
+                      return (
+                        <button
+                          type="button"
+                          key={detail.nodeId}
+                          onClick={() => onSelectNode(detail.nodeId)}
+                          className={`relative w-full cursor-pointer rounded-lg border bg-white p-3 text-left text-xs shadow-sm transition ${selected ? "border-blue-500 ring-2 ring-blue-100" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${statusDotClass(detail.status)} inline-block`} />
+                              <span className="truncate font-medium text-gray-900">{detail.label}</span>
+                            </div>
+                            <span className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-medium tabular-nums text-gray-500">{formatDuration(detail.durationMs)}</span>
+                          </div>
+                          {(parents.length > 0 || children.length > 0) ? (
+                            <div className="mt-2 flex flex-wrap gap-1.5 pl-4">
+                              {parents.length > 0 ? (
+                                <span className="rounded-md border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                                  waits for {parents.length === 1 ? parents[0].label : `${parents.length} inputs`}
+                                </span>
+                              ) : null}
+                              {children.length > 0 ? (
+                                <span className="rounded-md border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                                  feeds {children.length === 1 ? children[0].label : `${children.length} nodes`}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {detail.error ? <div className="mt-2 line-clamp-2 rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-600">{detail.error}</div> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WorkflowHistorySidebar() {
+  const { historyEntries, historyOpen, setHistoryOpen } = useWorkflowRunContext();
+  const graphEdges = useEdges();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  if (!historyOpen) return null;
+
+  const selectedRun = historyEntries.find((entry) => entry.id === expandedId) ?? null;
+  const selectedNode = selectedRun?.nodeDetails.find((detail) => detail.nodeId === selectedNodeId) ?? selectedRun?.nodeDetails[0] ?? null;
+  const requestDetail = selectedRun?.nodeDetails.find((detail) => detail.nodeId === "request-inputs") ?? null;
+  const responseDetail = selectedRun?.nodeDetails.find((detail) => detail.nodeId === "response") ?? null;
+
+  const magicaStatus = (status: HistoryRunEntry["status"]) => {
+    if (status === "success") return "Completed";
+    if (status === "failed") return "Failed";
+    return "Partial";
+  };
+
+  const statusDotClass = (status: HistoryRunEntry["status"] | HistoryNodeDetail["status"]) => {
+    if (status === "success") return "bg-emerald-500";
+    if (status === "failed") return "bg-red-500";
+    return "bg-amber-500";
+  };
+
+  const openRun = (entry: HistoryRunEntry) => {
+    const nextId = expandedId === entry.id ? null : entry.id;
+    setExpandedId(nextId);
+    setSelectedNodeId(nextId ? entry.nodeDetails[0]?.nodeId ?? null : null);
+  };
+
+  return (
+    <div className="absolute right-0 top-0 z-[80] h-full min-h-0 w-[360px] border-l border-gray-200 bg-gray-50">
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="sticky top-0 z-10 border-b border-gray-200 bg-white p-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-gray-900">Execution History</div>
+            <button type="button" onClick={() => setHistoryOpen(false)} className="inline-flex h-8 cursor-pointer items-center justify-center rounded-[18px] px-3 text-xs font-medium transition-colors hover:bg-gray-100 hover:text-gray-900">
+              Close
+            </button>
+          </div>
+          <div className="mt-3 flex rounded-lg border border-gray-200 bg-gray-100 p-0.5">
+            <button type="button" className="flex-1 cursor-pointer rounded-md bg-white px-3 py-1.5 text-[11px] font-medium text-gray-900 shadow-sm">
+              UI Runs
+            </button>
+            <button type="button" className="flex-1 cursor-pointer rounded-md px-3 py-1.5 text-[11px] font-medium text-gray-500 transition-colors hover:text-gray-700">
+              API Runs
+            </button>
+          </div>
+        </div>
+
+        <div className="site-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
+          {selectedRun ? (
+            <div className="space-y-4">
+              <button type="button" onClick={() => setExpandedId(null)} className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100">
+                <ChevronLeft size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+                Back to history
+              </button>
+
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="text-xs font-semibold text-gray-900">Run summary</div>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-gray-500">
+                  <div>
+                    Status: <span className="font-medium text-gray-900">{magicaStatus(selectedRun.status)}</span>
+                  </div>
+                  <div className="text-right">
+                    Mode: <span className="capitalize text-gray-900">{selectedRun.scope}</span>
+                  </div>
+                  <div>
+                    Started: <span className="text-gray-900">{new Date(selectedRun.timestamp).toLocaleString()}</span>
+                  </div>
+                  <div className="text-right">
+                    Duration: <span className="text-gray-900">{formatDuration(selectedRun.durationMs)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <ExecutionDependencyTree
+                details={selectedRun.nodeDetails}
+                graphEdges={graphEdges}
+                selectedNodeId={selectedNode?.nodeId ?? null}
+                onSelectNode={setSelectedNodeId}
+              />
+
+              {selectedNode?.nodeId === "response" && requestDetail ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-gray-900">Request-Inputs</div>
+                      <div className="mt-0.5 text-[11px] text-gray-400">Workflow request parameters</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">{formatDuration(requestDetail.durationMs)}</span>
+                      <span className={`h-2 w-2 rounded-full ${statusDotClass(requestDetail.status)} inline-block`} />
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="text-xs font-semibold text-gray-900">Resolved request values</div>
+                    <div className="mt-1 text-[11px] leading-4 text-gray-400">
+                      Values supplied at workflow start. Downstream nodes read these same values from the Request-Inputs field handles.
+                    </div>
+                    <div className="mt-2 max-h-72 overflow-auto">
+                      <HistoryValueView value={requestDetail.output ?? requestDetail.inputs ?? "No request values captured."} />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedNode?.nodeId === "response" && responseDetail ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-gray-900">Response</div>
+                      <div className="mt-0.5 text-[11px] text-gray-400">Final captured result</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">{formatDuration(responseDetail.durationMs)}</span>
+                      <span className={`h-2 w-2 rounded-full ${statusDotClass(responseDetail.status)} inline-block`} />
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+                    <div className="text-xs font-semibold text-gray-900">Final response</div>
+                    <div className="mt-1 text-[11px] leading-4 text-gray-400">Values captured by the Response node for display/export.</div>
+                    <div className="mt-2 max-h-72 overflow-auto">
+                      <HistoryValueView value={responseDetail.output || responseDetail.inputs || "No response captured."} />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedNode && selectedNode.nodeId !== "response" ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-semibold text-gray-900">{selectedNode.label}</div>
+                      <div className="mt-0.5 text-[11px] text-gray-400">{selectedNode.nodeId === "request-inputs" ? "Workflow request parameters" : selectedNode.nodeId === "response" ? "Final captured result" : "Node-level execution details"}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500">{formatDuration(selectedNode.durationMs)}</span>
+                      <span className={`h-2 w-2 rounded-full ${statusDotClass(selectedNode.status)} inline-block`} />
+                    </div>
+                  </div>
+                  {selectedNode.error ? (
+                    <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+                      <div className="text-sm font-medium text-red-700">Error</div>
+                      <div className="mt-2 rounded bg-red-100/50 p-2 text-[12px] leading-5 text-red-600">{selectedNode.error}</div>
+                    </div>
+                  ) : null}
+                  {selectedNode.nodeId === "request-inputs" ? (
+                    <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+                      <div className="text-xs font-semibold text-gray-900">Resolved request values</div>
+                      <div className="mt-1 text-[11px] leading-4 text-gray-400">
+                        Values supplied at workflow start. Downstream nodes read these same values from the Request-Inputs field handles.
+                      </div>
+                      <div className="mt-2 max-h-72 overflow-auto">
+                        <HistoryValueView value={selectedNode.output ?? selectedNode.inputs ?? "No request values captured."} />
+                      </div>
+                    </div>
+                  ) : selectedNode.nodeId === "response" ? (
+                    <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+                      <div className="text-xs font-semibold text-gray-900">Final response</div>
+                      <div className="mt-1 text-[11px] leading-4 text-gray-400">Values captured by the Response node for display/export.</div>
+                      <div className="mt-2 max-h-72 overflow-auto">
+                        <HistoryValueView value={selectedNode.output || selectedNode.inputs || (selectedNode.error ? "No output." : "No output yet.")} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid grid-cols-1 gap-3">
+                      <div className="rounded-xl border border-gray-200 bg-white p-4">
+                        <div className="text-xs font-semibold text-gray-900">Inputs used</div>
+                        <div className="mt-2 max-h-72 overflow-auto">
+                          <HistoryValueView value={selectedNode.inputs ?? "No inputs captured."} />
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-gray-200 bg-white p-4">
+                        <div className="text-xs font-semibold text-gray-900">Output</div>
+                        <div className="mt-1 text-[11px] leading-4 text-gray-400">The value returned by this executable node.</div>
+                        <div className="mt-2 max-h-72 overflow-auto">
+                          <HistoryValueView value={selectedNode.output || (selectedNode.error ? "No output." : "No output yet.")} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-medium text-gray-600">Run history</div>
+                <button type="button" className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 text-xs text-gray-700 transition-colors hover:bg-gray-50">
+                  All
+                  <ChevronDown size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {historyEntries.length === 0 ? (
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-center text-xs text-gray-500">No runs for this filter yet.</div>
+                ) : (
+                  historyEntries.map((entry) => (
+                    <div
+                      key={entry.id}
+                      onClick={() => openRun(entry)}
+                      className="w-full cursor-pointer rounded-xl border border-gray-200 bg-white px-3 py-3 text-left transition hover:bg-gray-50"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="inline-flex items-center gap-2">
+                          <span className={`h-2 w-2 rounded-full ${statusDotClass(entry.status)} inline-block`} />
+                          <span className="text-sm text-gray-900">{magicaStatus(entry.status)}</span>
+                        </div>
+                        <span className="text-xs text-gray-400">{new Date(entry.timestamp).toLocaleString()}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-500">
+                        <span>Scope: <span className="capitalize text-gray-700">{entry.scope}</span></span>
+                        <span>Duration: <span className="tabular-nums text-gray-700">{formatDuration(entry.durationMs)}</span></span>
+                        <span>Credits: <span className="tabular-nums text-gray-700">0M</span></span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SelectionRunOverlay({ nodes }: { nodes: Node[] }) {
+  const { runSelectedNodes, workflowRunning, selectedExecutableCount } = useWorkflowRunContext();
+  const { setEdges } = useReactFlow();
+  const { zoom } = useViewport();
+  const [selectionBounds, setSelectionBounds] = useState<DOMRect | null>(null);
+  const selectedExecutableNodes = nodes.filter((node) => node.selected && (node.type === "geminiPreview" || node.type === "cropImage"));
+  const selectedExecutableIds = selectedExecutableNodes.map((node) => node.id);
+  const canRunSelection = selectedExecutableNodes.length >= 2 && selectedExecutableCount >= 2;
+  const runPointerGuardRef = useRef(0);
+
+  const runCurrentSelection = useCallback(() => {
+    if (workflowRunning) return;
+    const now = Date.now();
+    if (now - runPointerGuardRef.current < 350) return;
+    runPointerGuardRef.current = now;
+    void runSelectedNodes(selectedExecutableIds);
+  }, [runSelectedNodes, selectedExecutableIds, workflowRunning]);
+
+  useEffect(() => {
+    const updateSelectionBounds = () => {
+      const rect = document.querySelector(".react-flow__nodesselection-rect");
+      setSelectionBounds(rect ? rect.getBoundingClientRect() : null);
+    };
+    updateSelectionBounds();
+    const flow = document.querySelector(".react-flow");
+    const observer = new MutationObserver(updateSelectionBounds);
+    if (flow) observer.observe(flow, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
+    window.addEventListener("resize", updateSelectionBounds);
+    window.addEventListener("scroll", updateSelectionBounds, true);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateSelectionBounds);
+      window.removeEventListener("scroll", updateSelectionBounds, true);
+    };
+  }, [nodes]);
+
+  useEffect(() => {
+    if (selectedExecutableNodes.length === 0) return;
+    setEdges((currentEdges) => currentEdges.some((edge) => edge.selected)
+      ? currentEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge)
+      : currentEdges);
+  }, [selectedExecutableNodes.length, setEdges]);
+
+  if (!canRunSelection || !selectionBounds) return null;
+
+  return createPortal(
+    <button
+      type="button"
+      data-selection-run-button="true"
+      aria-label={`Run ${selectedExecutableCount} selected nodes`}
+      disabled={workflowRunning}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runCurrentSelection();
+      }}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runCurrentSelection();
+      }}
+      className="nodrag nopan fixed inline-flex cursor-pointer items-center gap-2.5 whitespace-nowrap rounded-xl border border-[rgba(99,102,241,0.3)] bg-[#4f46e5] px-6 py-3.5 text-lg font-semibold text-white shadow-lg transition-colors hover:bg-[#4338ca] disabled:cursor-not-allowed disabled:opacity-60"
+      style={{
+        left: selectionBounds.left,
+        top: Math.max(8, selectionBounds.top - 58 * zoom),
+        zIndex: 10040,
+        pointerEvents: "auto",
+        transform: `scale(${zoom})`,
+        transformOrigin: "left top",
+      }}
+    >
+      <Play size={20} strokeWidth={2} className="h-5 w-5 fill-current" />
+      <span>Run {selectedExecutableCount} nodes</span>
+    </button>,
+    document.body,
+  );
+}
+
 function TopRightCanvasControls() {
-  const { runWorkflow, workflowRunning } = useWorkflowRunContext();
+  const { runWorkflow, cancelWorkflow, workflowRunning, setHistoryOpen } = useWorkflowRunContext();
   const metricClass = "inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white/90 px-2.5 text-[11px] font-medium text-gray-700 shadow-sm backdrop-blur";
 
   return (
@@ -3346,27 +4376,30 @@ function TopRightCanvasControls() {
               <span className="text-gray-500">M</span>
             </span>
           </span>
-          <HoverTooltip text="Run Workflow" side="bottom" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
-            <button type="button" aria-label="Run Workflow" disabled={workflowRunning} onClick={runWorkflow} className="flex h-8 w-9 cursor-pointer items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white shadow-sm transition-all hover:bg-[#4f46e5] disabled:cursor-not-allowed disabled:opacity-50">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="butt"
-                strokeLinejoin="miter"
-                className="h-3.5 w-3.5"
-                aria-hidden="true"
-              >
-                <polygon points="6 3 20 12 6 21 6 3" />
-              </svg>
-            </button>
-          </HoverTooltip>
+          {workflowRunning ? (
+            <>
+              <HoverTooltip text="Running..." side="bottom" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
+                <button type="button" aria-label="Workflow running" disabled className="flex h-8 w-9 cursor-not-allowed items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white opacity-60 shadow-sm">
+                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                </button>
+              </HoverTooltip>
+              <HoverTooltip text="Cancel Run" side="bottom" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
+                <button type="button" aria-label="Cancel workflow run" onClick={cancelWorkflow} className="flex h-8 w-9 cursor-pointer items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-500 shadow-sm transition-all hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50">
+                  <X size={15} strokeWidth={2} className="h-3.5 w-3.5" />
+                </button>
+              </HoverTooltip>
+            </>
+          ) : (
+            <HoverTooltip text="Run Workflow" side="bottom" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
+              <button type="button" aria-label="Run Workflow" onClick={runWorkflow} className="flex h-8 w-9 cursor-pointer items-center justify-center rounded-lg border border-[#818cf8] bg-[#6366f1] text-white shadow-sm transition-all hover:bg-[#4f46e5] disabled:cursor-not-allowed disabled:opacity-50">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="butt" strokeLinejoin="miter" className="h-3.5 w-3.5" aria-hidden="true">
+                  <polygon points="6 3 20 12 6 21 6 3" />
+                </svg>
+              </button>
+            </HoverTooltip>
+          )}
           <HoverTooltip text="Execution History" side="bottom" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
-            <button aria-label="Execution History" className="flex h-8 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-800 shadow-sm transition-all hover:bg-gray-100">
+            <button type="button" aria-label="Execution History" onClick={() => setHistoryOpen(true)} className="flex h-8 w-9 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-800 shadow-sm transition-all hover:bg-gray-100">
               <Clock size={14} strokeWidth={2} className="h-3.5 w-3.5" />
             </button>
           </HoverTooltip>
@@ -3419,14 +4452,62 @@ function BottomRightCanvasControls() {
   );
 }
 
-function BottomToolbar() {
-  const { zoomIn, zoomOut, fitView } = useReactFlow();
+type CanvasInteractionMode = "select" | "pan";
+
+function BottomToolbar({
+  interactionMode,
+  setInteractionMode,
+}: {
+  interactionMode: CanvasInteractionMode;
+  setInteractionMode: (mode: CanvasInteractionMode) => void;
+}) {
+  const { zoomIn, zoomOut, fitView, getNodes, getEdges, setNodes, setEdges } = useReactFlow();
   const { zoom } = useViewport();
   const [collapsed, setCollapsed] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const { undo, redo, canUndo, canRedo, recordSnapshot } = useWorkflowEditContext();
 
   const noop = () => {};
+
+  const exportWorkflowJson = useCallback(() => {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      nodes: getNodes(),
+      edges: getEdges(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `py-workflow-${Date.now()}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast({ description: "Workflow exported as JSON" });
+  }, [getEdges, getNodes]);
+
+  const importWorkflowJson = useCallback(async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as { nodes?: Node[]; edges?: Edge[] };
+      if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
+        throw new Error("Invalid workflow JSON: expected nodes and edges arrays");
+      }
+      recordSnapshot();
+      setNodes(parsed.nodes);
+      setEdges(parsed.edges);
+      requestAnimationFrame(() => fitView({ padding: 0.15 }));
+      toast({ description: "Workflow imported" });
+    } catch (error) {
+      toast({ description: error instanceof Error ? error.message : "Import failed" });
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }, [fitView, recordSnapshot, setEdges, setNodes]);
   const toolbarShellClass =
-    "absolute bottom-[15px] left-[15px] z-10 flex items-center gap-1 rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm";
+    "nodrag nopan absolute bottom-[15px] left-[15px] z-10 flex items-center gap-1 rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm";
 
   if (collapsed) {
     return (
@@ -3437,12 +4518,26 @@ function BottomToolbar() {
   }
 
   return (
-    <div className={toolbarShellClass}>
+    <>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void importWorkflowJson(file);
+        }}
+      />
+      <div className={toolbarShellClass}>
       <ToolbarButton icon={ChevronLeft} label="Collapse controls" onClick={() => setCollapsed(true)} />
       <Divider />
-      <ToolbarButton icon={Undo2} label="Undo" onClick={noop} disabled />
-      <ToolbarButton icon={Redo2} label="Redo" onClick={noop} disabled />
+      <ToolbarButton icon={Undo2} label="Undo" onClick={undo} disabled={!canUndo} />
+      <ToolbarButton icon={Redo2} label="Redo" onClick={redo} disabled={!canRedo} />
       <ToolbarButton icon={Command} label="Keyboard shortcuts" onClick={noop} />
+      <Divider />
+      <ToolbarButton icon={FileOutput} label="Export workflow JSON" onClick={exportWorkflowJson} />
+      <ToolbarButton icon={CloudUpload} label="Import workflow JSON" onClick={() => importInputRef.current?.click()} />
       <Divider />
       <ToolbarButton
         icon={ZoomOut}
@@ -3462,8 +4557,51 @@ function BottomToolbar() {
       <Divider />
       <ToolbarButton icon={Maximize2} label="Fit view" onClick={() => fitView()} />
       <ToolbarButton icon={LayoutGrid} label="Toggle minimap" onClick={noop} />
-      <ToolbarButton icon={Move} label="Pan tool" onClick={noop} />
-    </div>
+      <Divider />
+      <PanSelectToggle
+        interactionMode={interactionMode}
+        setInteractionMode={setInteractionMode}
+      />
+      </div>
+    </>
+  );
+}
+
+function PanSelectToggle({
+  interactionMode,
+  setInteractionMode,
+}: {
+  interactionMode: CanvasInteractionMode;
+  setInteractionMode: (mode: CanvasInteractionMode) => void;
+}) {
+  const panActive = interactionMode === "pan";
+  const Icon = panActive ? Move : Square;
+  const label = panActive ? "Select mode" : "Pan mode";
+
+  return (
+    <HoverTooltip text={label} side="top" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
+      <button
+        data-preserve-selection="true"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setInteractionMode(panActive ? "select" : "pan");
+        }}
+        aria-label={label}
+        aria-pressed={panActive}
+        className={`nodrag nopan cursor-pointer rounded-lg p-2 transition-colors ${!panActive ? "bg-workflow-accent-600 text-white" : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"}`}
+      >
+        <Icon size={14} strokeWidth={2} className="h-3.5 w-3.5" />
+      </button>
+    </HoverTooltip>
   );
 }
 
@@ -3472,18 +4610,21 @@ function ToolbarButton({
   label,
   onClick,
   disabled,
+  active,
 }: {
   icon: React.ElementType;
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  active?: boolean;
 }) {
   const button = (
     <button
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      className="rounded-lg p-2 text-gray-700 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300"
+      aria-pressed={active}
+      className={`cursor-pointer rounded-lg p-2 transition-colors disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300 ${active ? "bg-gray-900 text-white shadow-sm hover:bg-gray-800 hover:text-white" : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"}`}
     >
       <Icon size={14} strokeWidth={2} className="h-3.5 w-3.5" />
     </button>
@@ -3558,10 +4699,60 @@ export default function WorkflowCanvasPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [edges, setEdges, onEdgesChangeBase] = useEdgesState(initialEdges);
   const [nodeValues, setNodeValues] = useState<NodeOutputValues>({});
   const [runningNodeIds, setRunningNodeIds] = useState<Set<string>>(new Set());
+  const [pendingNodeIds, setPendingNodeIds] = useState<Set<string>>(new Set());
   const [workflowRunning, setWorkflowRunning] = useState(false);
+  const runCancelTokenRef = useRef(0);
+  const resolveActiveRunRef = useRef<(() => void) | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState<HistoryRunEntry[]>([]);
+  const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>("select");
+  const [selectionBoxNodeIds, setSelectionBoxNodeIds] = useState<Set<string>>(() => new Set());
+  const selectionBoxInProgressRef = useRef(false);
+  const undoStackRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
+  const redoStackRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
+  const [editHistoryCounts, setEditHistoryCounts] = useState({ undo: 0, redo: 0 });
+
+  const refreshEditHistoryCounts = useCallback(() => {
+    setEditHistoryCounts({ undo: undoStackRef.current.length, redo: redoStackRef.current.length });
+  }, []);
+
+  const recordSnapshot = useCallback(() => {
+    undoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
+    if (undoStackRef.current.length > 80) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    refreshEditHistoryCounts();
+  }, [edges, nodes, refreshEditHistoryCounts]);
+
+  const undo = useCallback(() => {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return;
+    redoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
+    setNodes(previous.nodes);
+    setEdges(previous.edges);
+    refreshEditHistoryCounts();
+  }, [edges, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
+
+  const redo = useCallback(() => {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    undoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    refreshEditHistoryCounts();
+  }, [edges, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
+
+  const canUndo = editHistoryCounts.undo > 0;
+  const canRedo = editHistoryCounts.redo > 0;
+
+  const addHistoryEntry = useCallback((entry: Omit<HistoryRunEntry, "id" | "timestamp">) => {
+    setHistoryEntries((current) => [
+      { ...entry, id: `run-${Date.now()}-${Math.random().toString(36).slice(2)}`, timestamp: Date.now() },
+      ...current,
+    ]);
+  }, []);
 
   const setNodeHandleValue = useCallback((nodeId: string, handleId: string, value: unknown) => {
     setNodeValues((current) => {
@@ -3578,13 +4769,26 @@ export default function WorkflowCanvasPage() {
 
   const onNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChangeBase>[0]) => {
+      const meaningful = changes.some((change) => {
+        const maybeDragging = "dragging" in change ? change.dragging : false;
+        return change.type === "remove" || change.type === "add" || (change.type === "position" && !maybeDragging);
+      });
+      if (meaningful) recordSnapshot();
       onNodesChangeBase(
         changes.filter(
           (change) => change.type !== "remove" || !PERMANENT_NODE_IDS.has(change.id),
         ),
       );
     },
-    [onNodesChangeBase],
+    [onNodesChangeBase, recordSnapshot],
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: Parameters<typeof onEdgesChangeBase>[0]) => {
+      if (changes.some((change) => change.type === "remove" || change.type === "add")) recordSnapshot();
+      onEdgesChangeBase(changes);
+    },
+    [onEdgesChangeBase, recordSnapshot],
   );
 
   const isValidConnection = useCallback(
@@ -3607,14 +4811,15 @@ export default function WorkflowCanvasPage() {
       if (connection.source === connection.target) return;
       if (wouldCreateCycle(edges, connection.source, connection.target)) return;
       const color = HANDLE_COLORS[sourceType] ?? "#f59e0b";
+      recordSnapshot();
       setEdges((eds) =>
         addEdge(
-          { ...connection, style: { stroke: color, strokeWidth: 2 } },
+          { ...connection, type: "removable", animated: false, style: { stroke: color, strokeWidth: 2 } },
           eds,
         ),
       );
     },
-    [setEdges, edges],
+    [setEdges, edges, recordSnapshot],
   );
 
   const onConnectEnd = useCallback<OnConnectEnd>(
@@ -3638,6 +4843,7 @@ export default function WorkflowCanvasPage() {
 
   const selectOnlyNode = useCallback(
     (nodeId: string | null) => {
+      setSelectionBoxNodeIds(new Set());
       setNodes((nds) => nds.map((node) => ({ ...node, selected: nodeId === null ? false : node.id === nodeId })));
     },
     [setNodes],
@@ -3649,11 +4855,13 @@ export default function WorkflowCanvasPage() {
       if (!target) return;
       const nodeEl = target.closest(".react-flow__node");
       if (nodeEl instanceof HTMLElement) {
+        if (event.shiftKey || event.ctrlKey || event.metaKey) return;
         const nodeId = nodeEl.getAttribute("data-id");
         if (nodeId) selectOnlyNode(nodeId);
         return;
       }
-      if (!target.closest("[role='menu'], .react-flow__edge")) {
+      if (target.closest("[data-preserve-selection='true']")) return;
+      if (!target.closest("[role='menu'], .react-flow__edge, [data-selection-run-button='true']")) {
         selectOnlyNode(null);
       }
     };
@@ -3662,6 +4870,7 @@ export default function WorkflowCanvasPage() {
   }, [selectOnlyNode]);
 
   const handleAddGemini = useCallback(() => {
+    recordSnapshot();
     setNodes((nds) => [
       ...nds,
       {
@@ -3671,9 +4880,10 @@ export default function WorkflowCanvasPage() {
         data: {},
       },
     ]);
-  }, [setNodes]);
+  }, [recordSnapshot, setNodes]);
 
   const handleAddCrop = useCallback(() => {
+    recordSnapshot();
     setNodes((nds) => [
       ...nds,
       {
@@ -3683,9 +4893,10 @@ export default function WorkflowCanvasPage() {
         data: {},
       },
     ]);
-  }, [setNodes]);
+  }, [recordSnapshot, setNodes]);
 
   const handleAddStickyNote = useCallback(() => {
+    recordSnapshot();
     setNodes((nds) => [
       ...nds,
       {
@@ -3695,14 +4906,92 @@ export default function WorkflowCanvasPage() {
         data: { color: "#fef9c3", fontSize: 24, fontFamily: "sans-serif", bold: true, text: "" },
       },
     ]);
-  }, [setNodes]);
+  }, [recordSnapshot, setNodes]);
 
-  const runWorkflow = useCallback(async () => {
+  const runExecutableScope = useCallback(async (targetIds: Set<string> | null, scope: "full" | "partial" | "single") => {
     if (workflowRunning) return;
+    const runToken = runCancelTokenRef.current + 1;
+    runCancelTokenRef.current = runToken;
     setWorkflowRunning(true);
+
+    type NodeRunResult = { nodeId: string; values: Record<string, unknown>; inputs: Record<string, unknown> };
+
+    const runStartedAt = Date.now();
+    const nodeDetails: HistoryNodeDetail[] = [];
     const outputs: NodeOutputValues = { ...nodeValues };
-    const completed = new Set(nodes.filter((node) => node.type === "request").map((node) => node.id));
-    const executable = nodes.filter((node) => node.type === "geminiPreview" || node.type === "cropImage");
+    const allExecutable = nodes.filter((node) => node.type === "geminiPreview" || node.type === "cropImage");
+    const executable = targetIds ? allExecutable.filter((node) => targetIds.has(node.id)) : allExecutable;
+    const executableIds = new Set(executable.map((node) => node.id));
+    const completed = new Set(nodes.filter((node) => !executableIds.has(node.id)).map((node) => node.id));
+    const running = new Set<string>();
+
+    if (executable.length === 0) {
+      toast({ description: "Select at least one executable node" });
+      setWorkflowRunning(false);
+      return;
+    }
+
+    if (targetIds) {
+      const nodeById = new globalThis.Map(nodes.map((node) => [node.id, node]));
+      const isExecutableNode = (node: Node | undefined) => node?.type === "geminiPreview" || node?.type === "cropImage";
+      const externalUpstream = new Set<string>();
+      const selectedBlockedBy = new globalThis.Map<string, string>();
+
+      for (const selectedNode of executable) {
+        const queue = edges.filter((edge) => edge.target === selectedNode.id).map((edge) => edge.source);
+        const visited = new Set<string>();
+
+        while (queue.length > 0) {
+          const sourceId = queue.shift()!;
+          if (visited.has(sourceId)) continue;
+          visited.add(sourceId);
+
+          if (executableIds.has(sourceId)) {
+            edges.filter((edge) => edge.target === sourceId).forEach((edge) => queue.push(edge.source));
+            continue;
+          }
+
+          const sourceNode = nodeById.get(sourceId);
+          if (isExecutableNode(sourceNode)) {
+            externalUpstream.add(sourceId);
+            if (!selectedBlockedBy.has(selectedNode.id)) selectedBlockedBy.set(selectedNode.id, sourceId);
+            edges.filter((edge) => edge.target === sourceId).forEach((edge) => queue.push(edge.source));
+          }
+        }
+      }
+
+      if (externalUpstream.size > 0) {
+        const blockedNodeId = selectedBlockedBy.keys().next().value as string | undefined;
+        const upstreamId = blockedNodeId ? selectedBlockedBy.get(blockedNodeId) : [...externalUpstream][0];
+        const blockedNode = blockedNodeId ? nodeById.get(blockedNodeId) : executable[0];
+        const upstreamNode = upstreamId ? nodeById.get(upstreamId) : undefined;
+        const blockedLabel = blockedNode ? nodeHistoryLabel(blockedNode) : "the selected node";
+        const upstreamLabel = upstreamNode ? nodeHistoryLabel(upstreamNode) : "an unselected upstream node";
+        const message = `Cannot run selection because "${blockedLabel}" depends on "${upstreamLabel}". Select the upstream node too, run it first as part of this selection, or run the full workflow.`;
+        addHistoryEntry({
+          scope,
+          status: "failed",
+          durationMs: Date.now() - runStartedAt,
+          nodeDetails: executable.map((node) => ({
+            nodeId: node.id,
+            label: nodeHistoryLabel(node),
+            status: "failed",
+            durationMs: Date.now() - runStartedAt,
+            error: message,
+          })),
+        });
+        toast({ description: message });
+        setRunningNodeIds(new Set());
+        setPendingNodeIds(new Set());
+        setWorkflowRunning(false);
+        return;
+      }
+    }
+
+    const syncRunningNodes = () => {
+      setRunningNodeIds(new Set(running));
+      setPendingNodeIds(new Set(executable.filter((node) => !completed.has(node.id) && !running.has(node.id)).map((node) => node.id)));
+    };
 
     const readConnected = (targetNodeId: string, targetHandle: string) => {
       const edge = edges.find((item) => item.target === targetNodeId && item.targetHandle === targetHandle);
@@ -3711,72 +5000,305 @@ export default function WorkflowCanvasPage() {
       return displayConnectedValue(outputs[edge.source]?.[sourceHandle]);
     };
 
-    try {
-      while (executable.some((node) => !completed.has(node.id))) {
-        const ready = executable.filter((node) => {
-          if (completed.has(node.id)) return false;
-          const upstream = edges.filter((edge) => edge.target === node.id).map((edge) => edge.source);
-          return upstream.every((id) => completed.has(id) || !nodes.some((nodeItem) => nodeItem.id === id && executable.some((exec) => exec.id === id)));
-        });
-        if (ready.length === 0) throw new Error("No runnable nodes found. Check for cycles or missing inputs.");
+    const readConnectedValues = (targetNodeId: string, targetHandle: string) => {
+      return edges
+        .filter((item) => item.target === targetNodeId && item.targetHandle === targetHandle)
+        .flatMap((edge) => {
+          const sourceHandle = edge.sourceHandle ?? "result";
+          return valueToStringArray(outputs[edge.source]?.[sourceHandle]);
+        })
+        .filter(Boolean);
+    };
 
-        setRunningNodeIds(new Set(ready.map((node) => node.id)));
-        const results = await Promise.all(ready.map(async (node) => {
-          if (node.type === "geminiPreview") {
-            const prompt = readConnected(node.id, "prompt");
-            const systemPrompt = readConnected(node.id, "system-prompt");
-            const res = await fetch("/api/tasks/gemini", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ prompt, systemPrompt: systemPrompt || undefined, model: "gemini-3.1-pro" }),
-            });
-            const json = await res.json() as { output?: { response?: string }; error?: string; details?: { message?: string } | unknown };
-            if (!res.ok) {
-              const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
-              throw new Error(detailMessage ?? json.error ?? `Gemini node ${node.id} failed`);
-            }
-            return { nodeId: node.id, values: { response: json.output?.response ?? "", result: json.output?.response ?? "" } };
-          }
+    const readManual = (targetNodeId: string, targetHandle: string) => outputs[targetNodeId]?.[targetHandle];
 
-          const res = await fetch("/api/tasks/crop-image", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              inputImageUrl: readConnected(node.id, "input-image"),
-              x: Number(readConnected(node.id, "x-position") || 0),
-              y: Number(readConnected(node.id, "y-position") || 0),
-              width: Number(readConnected(node.id, "width") || 100),
-              height: Number(readConnected(node.id, "height") || 100),
-            }),
-          });
-          const json = await res.json() as { output?: { outputImageUrl?: string }; error?: string; details?: { message?: string } | unknown };
-          if (!res.ok) {
-            const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
-            throw new Error(detailMessage ?? json.error ?? `Crop node ${node.id} failed`);
-          }
-          return { nodeId: node.id, values: { "output-image": json.output?.outputImageUrl ?? "", outputImageUrl: json.output?.outputImageUrl ?? "" } };
-        }));
+    const readEffective = (targetNodeId: string, targetHandle: string, fallback: unknown = "") => {
+      const connected = readConnected(targetNodeId, targetHandle);
+      if (connected) return connected;
+      const manualText = displayConnectedValue(readManual(targetNodeId, targetHandle));
+      return manualText || fallback;
+    };
 
-        for (const result of results) {
-          outputs[result.nodeId] = { ...(outputs[result.nodeId] ?? {}), ...result.values };
-          completed.add(result.nodeId);
-        }
-        setNodeValues((current) => {
-          const next = { ...current };
-          for (const result of results) {
-            next[result.nodeId] = { ...(next[result.nodeId] ?? {}), ...result.values };
-          }
-          return next;
-        });
+    const buildRequestDetail = (node: Node): HistoryNodeDetail => {
+      const fields = Array.isArray(node.data?.fields) ? node.data.fields as Array<{ id?: string; label?: string; value?: unknown }> : [];
+      const output = Object.fromEntries(fields.map((field) => {
+        const id = field.id ?? field.label ?? "field";
+        return [field.label ?? id, outputs[node.id]?.[id] ?? field.value ?? ""];
+      }));
+      return { nodeId: node.id, label: nodeHistoryLabel(node), status: "success", durationMs: 100, inputs: output, output };
+    };
+
+    const buildResponseDetail = (node: Node): HistoryNodeDetail => {
+      const connectedValues = readConnectedValues(node.id, "result");
+      const value = connectedValues.length <= 1 ? connectedValues[0] ?? "" : connectedValues;
+      return { nodeId: node.id, label: nodeHistoryLabel(node), status: "success", durationMs: 100, inputs: { result: value }, output: value };
+    };
+
+    const buildExecutableInputs = (node: Node): Record<string, unknown> => {
+      if (node.type === "geminiPreview") {
+        const prompt = String(readEffective(node.id, "prompt", typeof node.data?.prompt === "string" ? node.data.prompt : ""));
+        const systemPrompt = String(readEffective(node.id, "system-prompt", typeof node.data?.systemPrompt === "string" ? node.data.systemPrompt : ""));
+        return {
+          prompt,
+          systemPrompt: systemPrompt || undefined,
+          imageUrls: [...readConnectedValues(node.id, "image"), ...valueToStringArray(readManual(node.id, "image"))],
+          videoUrls: [...readConnectedValues(node.id, "video"), ...valueToStringArray(readManual(node.id, "video"))],
+          audioUrls: [...readConnectedValues(node.id, "audio"), ...valueToStringArray(readManual(node.id, "audio"))],
+          fileUrls: [...readConnectedValues(node.id, "file"), ...valueToStringArray(readManual(node.id, "file"))],
+          model: "gemini-3.1-pro",
+        };
       }
-      toast({ description: "Workflow run completed" });
-    } catch (error) {
-      toast({ description: error instanceof Error ? error.message : "Workflow run failed" });
-    } finally {
+      return {
+        inputImageUrl: String(readEffective(node.id, "input-image", "")),
+        x: Number(readEffective(node.id, "x-position", node.data?.x || 0)),
+        y: Number(readEffective(node.id, "y-position", node.data?.y || 0)),
+        width: Number(readEffective(node.id, "width", node.data?.width || 100)),
+        height: Number(readEffective(node.id, "height", node.data?.height || 100)),
+      };
+    };
+
+    const composeHistoryDetails = (includeResponse: boolean) => {
+      if (scope !== "full") return nodeDetails;
+      const byNodeId = new globalThis.Map(nodeDetails.map((detail) => [detail.nodeId, detail]));
+      return nodes.flatMap((node): HistoryNodeDetail[] => {
+        if (node.type === "request") return [buildRequestDetail(node)];
+        if (node.type === "response") return includeResponse ? [buildResponseDetail(node)] : [];
+        const detail = byNodeId.get(node.id);
+        return detail ? [detail] : [];
+      });
+    };
+
+    const hasSelectedExecutableUpstream = (targetNodeId: string, targetHandle: string) => {
+      return edges.some((edge) => edge.target === targetNodeId && edge.targetHandle === targetHandle && executableIds.has(edge.source));
+    };
+
+    const missingRequiredInput = executable.find((node) => {
+      if (node.type === "geminiPreview") {
+        if (hasSelectedExecutableUpstream(node.id, "prompt")) return false;
+        return !String(readEffective(node.id, "prompt", typeof node.data?.prompt === "string" ? node.data.prompt : "")).trim();
+      }
+      if (node.type === "cropImage") {
+        if (hasSelectedExecutableUpstream(node.id, "input-image")) return false;
+        return !String(readEffective(node.id, "input-image", "")).trim();
+      }
+      return false;
+    });
+
+    if (missingRequiredInput) {
+      const message = missingRequiredInput.type === "cropImage" ? "Input Image is required" : "Prompt is required";
+      const detail: HistoryNodeDetail = {
+        nodeId: missingRequiredInput.id,
+        label: nodeHistoryLabel(missingRequiredInput),
+        status: "failed",
+        durationMs: Date.now() - runStartedAt,
+        inputs: buildExecutableInputs(missingRequiredInput),
+        error: message,
+      };
+      addHistoryEntry({ scope, status: "failed", durationMs: Date.now() - runStartedAt, nodeDetails: scope === "full" ? [buildRequestDetail(nodes.find((node) => node.type === "request") ?? initialNodes[0]), detail] : [detail] });
+      toast({ description: message });
       setRunningNodeIds(new Set());
+      setPendingNodeIds(new Set());
       setWorkflowRunning(false);
+      return;
     }
-  }, [edges, nodeValues, nodes, workflowRunning]);
+
+    const validateExecutableNodeInputs = (node: Node) => {
+      if (node.type === "geminiPreview") {
+        const prompt = String(readEffective(node.id, "prompt", typeof node.data?.prompt === "string" ? node.data.prompt : ""));
+        return prompt.trim() ? null : "Prompt is required";
+      }
+      if (node.type === "cropImage") {
+        const inputImageUrl = String(readEffective(node.id, "input-image", ""));
+        return inputImageUrl.trim() ? null : "Input Image is required";
+      }
+      return null;
+    };
+
+    const runExecutableNode = async (node: Node): Promise<NodeRunResult> => {
+      if (node.type === "geminiPreview") {
+        const prompt = String(readEffective(node.id, "prompt", typeof node.data?.prompt === "string" ? node.data.prompt : ""));
+        const systemPrompt = String(readEffective(node.id, "system-prompt", typeof node.data?.systemPrompt === "string" ? node.data.systemPrompt : ""));
+        const imageUrls = [...readConnectedValues(node.id, "image"), ...valueToStringArray(readManual(node.id, "image"))];
+        const videoUrls = [...readConnectedValues(node.id, "video"), ...valueToStringArray(readManual(node.id, "video"))];
+        const audioUrls = [...readConnectedValues(node.id, "audio"), ...valueToStringArray(readManual(node.id, "audio"))];
+        const fileUrls = [...readConnectedValues(node.id, "file"), ...valueToStringArray(readManual(node.id, "file"))];
+        const inputs = { prompt, systemPrompt: systemPrompt || undefined, imageUrls, videoUrls, audioUrls, fileUrls, model: "gemini-3.1-pro" };
+        const res = await fetch("/api/tasks/gemini", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(inputs),
+        });
+        const json = await res.json() as { output?: { response?: string }; error?: string; details?: { message?: string } | unknown };
+        if (!res.ok) {
+          const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
+          throw new Error(detailMessage ?? json.error ?? `Gemini node ${node.id} failed`);
+        }
+        return { nodeId: node.id, values: { response: json.output?.response ?? "", result: json.output?.response ?? "" }, inputs };
+      }
+
+      const inputs = {
+        inputImageUrl: String(readEffective(node.id, "input-image", "")),
+        x: Number(readEffective(node.id, "x-position", node.data?.x || 0)),
+        y: Number(readEffective(node.id, "y-position", node.data?.y || 0)),
+        width: Number(readEffective(node.id, "width", node.data?.width || 100)),
+        height: Number(readEffective(node.id, "height", node.data?.height || 100)),
+      };
+      const res = await fetch("/api/tasks/crop-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(inputs),
+      });
+      const json = await res.json() as { output?: { outputImageUrl?: string }; error?: string; details?: { message?: string } | unknown };
+      if (!res.ok) {
+        const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
+        throw new Error(detailMessage ?? json.error ?? `Crop node ${node.id} failed`);
+      }
+      return { nodeId: node.id, values: { "output-image": json.output?.outputImageUrl ?? "", outputImageUrl: json.output?.outputImageUrl ?? "" }, inputs };
+    };
+
+    const isReady = (node: Node) => {
+      if (completed.has(node.id) || running.has(node.id)) return false;
+      const directExecutableDeps = edges
+        .filter((edge) => edge.target === node.id && executableIds.has(edge.source))
+        .map((edge) => edge.source);
+      return directExecutableDeps.every((sourceId) => completed.has(sourceId));
+    };
+
+    const commitResult = (result: NodeRunResult) => {
+      outputs[result.nodeId] = { ...(outputs[result.nodeId] ?? {}), ...result.values };
+      completed.add(result.nodeId);
+      setNodeValues((current) => ({
+        ...current,
+        [result.nodeId]: { ...(current[result.nodeId] ?? {}), ...result.values },
+      }));
+    };
+
+    setSelectionBoxNodeIds(new Set());
+    setNodes((currentNodes) => currentNodes.some((node) => node.selected)
+      ? currentNodes.map((node) => node.selected ? { ...node, selected: false } : node)
+      : currentNodes);
+
+    try {
+      syncRunningNodes();
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        resolveActiveRunRef.current = () => {
+          settled = true;
+          resolve();
+        };
+
+        const fail = (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          reject(error);
+        };
+
+        const scheduleReadyNodes = () => {
+          if (settled || runCancelTokenRef.current !== runToken) return;
+          if (executable.every((node) => completed.has(node.id))) {
+            settled = true;
+            resolve();
+            return;
+          }
+
+          const ready = executable.filter(isReady);
+          if (ready.length === 0 && running.size === 0) {
+            fail(new Error("No runnable nodes found. Check for cycles or missing inputs."));
+            return;
+          }
+
+          for (const node of ready) {
+            const validationError = validateExecutableNodeInputs(node);
+            if (validationError) {
+              const durationMs = Date.now() - runStartedAt;
+              nodeDetails.push({ nodeId: node.id, label: nodeHistoryLabel(node), status: "failed", durationMs, inputs: buildExecutableInputs(node), error: validationError });
+              fail(new Error(validationError));
+              return;
+            }
+            running.add(node.id);
+            syncRunningNodes();
+            const nodeStartedAt = Date.now();
+            void runExecutableNode(node)
+              .then((result) => {
+                if (runCancelTokenRef.current !== runToken) return;
+                const durationMs = Date.now() - nodeStartedAt;
+                running.delete(node.id);
+                commitResult(result);
+                nodeDetails.push({ nodeId: node.id, label: nodeHistoryLabel(node), status: "success", durationMs, inputs: result.inputs, output: result.values });
+                syncRunningNodes();
+                scheduleReadyNodes();
+              })
+              .catch((error: unknown) => {
+                if (runCancelTokenRef.current !== runToken) return;
+                const durationMs = Date.now() - nodeStartedAt;
+                const message = error instanceof Error ? error.message : "Node run failed";
+                running.delete(node.id);
+                nodeDetails.push({ nodeId: node.id, label: nodeHistoryLabel(node), status: "failed", durationMs, inputs: buildExecutableInputs(node), error: message });
+                syncRunningNodes();
+                fail(error);
+              });
+          }
+        };
+
+        scheduleReadyNodes();
+      });
+
+      if (runCancelTokenRef.current === runToken) {
+        addHistoryEntry({ scope, status: "success", durationMs: Date.now() - runStartedAt, nodeDetails: composeHistoryDetails(true) });
+        toast({ description: scope === "full" ? "Workflow run completed" : "Selected run completed" });
+      }
+    } catch (error) {
+      if (runCancelTokenRef.current === runToken) {
+        addHistoryEntry({ scope, status: "failed", durationMs: Date.now() - runStartedAt, nodeDetails: composeHistoryDetails(false) });
+        toast({ description: error instanceof Error ? error.message : "Workflow run failed" });
+        runCancelTokenRef.current += 1;
+        running.clear();
+        setRunningNodeIds(new Set());
+        setPendingNodeIds(new Set());
+        setWorkflowRunning(false);
+      }
+    } finally {
+      if (resolveActiveRunRef.current) resolveActiveRunRef.current = null;
+      if (runCancelTokenRef.current === runToken) {
+        running.clear();
+        setRunningNodeIds(new Set());
+        setPendingNodeIds(new Set());
+        setWorkflowRunning(false);
+      }
+    }
+  }, [addHistoryEntry, edges, nodeValues, nodes, setNodes, workflowRunning]);
+
+  const cancelWorkflow = useCallback(() => {
+    runCancelTokenRef.current += 1;
+    resolveActiveRunRef.current?.();
+    resolveActiveRunRef.current = null;
+    setRunningNodeIds(new Set());
+    setPendingNodeIds(new Set());
+    setWorkflowRunning(false);
+    toast({ description: "Workflow run canceled" });
+  }, []);
+
+  const runWorkflow = useCallback(async () => {
+    await runExecutableScope(null, "full");
+  }, [runExecutableScope]);
+
+  const selectedExecutableNodes = nodes.filter((node) => node.selected && (node.type === "geminiPreview" || node.type === "cropImage"));
+  const selectedExecutableCount = selectedExecutableNodes.length;
+
+  const runSelectedNodes = useCallback(async (selectedIds?: string[]) => {
+    const selectedIdSet = selectedIds?.length ? new Set(selectedIds) : null;
+    const selected = nodes.filter((node) => (selectedIdSet ? selectedIdSet.has(node.id) : node.selected) && (node.type === "geminiPreview" || node.type === "cropImage"));
+    setEdges((currentEdges) => currentEdges.some((edge) => edge.selected) ? currentEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge) : currentEdges);
+    if (selected.length === 0) {
+      toast({ description: "Select one or more executable nodes first" });
+      return;
+    }
+    setSelectionBoxNodeIds(new Set());
+    setNodes((currentNodes) => currentNodes.some((node) => node.selected)
+      ? currentNodes.map((node) => node.selected ? { ...node, selected: false } : node)
+      : currentNodes);
+    await runExecutableScope(new Set(selected.map((node) => node.id)), selected.length === 1 ? "single" : "partial");
+  }, [nodes, runExecutableScope, setEdges, setNodes]);
 
   return (
     <ReactFlowProvider>
@@ -3787,19 +5309,47 @@ export default function WorkflowCanvasPage() {
 
         <div className="relative flex-1">
           <NodeValueContext.Provider value={{ values: nodeValues, setNodeHandleValue }}>
-          <WorkflowRunContext.Provider value={{ runningNodeIds, runWorkflow, workflowRunning }}>
+          <WorkflowRunContext.Provider value={{ runningNodeIds, pendingNodeIds, runWorkflow, runSelectedNodes, cancelWorkflow, workflowRunning, selectedExecutableCount, addHistoryEntry, historyEntries, historyOpen, setHistoryOpen }}>
+          <WorkflowEditContext.Provider value={{ undo, redo, recordSnapshot, canUndo, canRedo }}>
+          <SelectionBoxNodeContext.Provider value={selectionBoxNodeIds}>
+          <WorkflowHistorySidebar />
+          <SelectionRunOverlay nodes={nodes} />
           <ReactFlow
             nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onConnectEnd={onConnectEnd}
-          onNodeClick={(_, node) => selectOnlyNode(node.id)}
+          onNodeClick={(event, node) => {
+            setSelectionBoxNodeIds(new Set());
+            if (event.shiftKey || event.ctrlKey || event.metaKey) {
+              setNodes((nds) => nds.map((item) => item.id === node.id ? { ...item, selected: !item.selected } : item));
+              return;
+            }
+            selectOnlyNode(node.id);
+          }}
           onPaneClick={() => selectOnlyNode(null)}
+          onSelectionStart={() => {
+            selectionBoxInProgressRef.current = true;
+            setSelectionBoxNodeIds(new Set());
+          }}
+          onSelectionChange={({ nodes: selectedNodes }) => {
+            if (!selectionBoxInProgressRef.current) return;
+            setSelectionBoxNodeIds(new Set(selectedNodes.map((node) => node.id)));
+          }}
+          onSelectionEnd={() => {
+            selectionBoxInProgressRef.current = false;
+          }}
           isValidConnection={isValidConnection}
           connectionLineComponent={CustomConnectionLine}
+          panOnDrag={interactionMode === "pan"}
+          selectionOnDrag={interactionMode === "select"}
+          selectionMode={SelectionMode.Partial}
+          panOnScroll={false}
+          selectNodesOnDrag={false}
 
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
@@ -3817,9 +5367,11 @@ export default function WorkflowCanvasPage() {
           <TopLeftCanvasTitle />
           <TopRightCanvasControls />
           <BottomRightCanvasControls />
-          <BottomToolbar />
+          <BottomToolbar interactionMode={interactionMode} setInteractionMode={setInteractionMode} />
           <CenterNodeToolbar onAddGemini={handleAddGemini} onAddCrop={handleAddCrop} onAddStickyNote={handleAddStickyNote} />
           </ReactFlow>
+          </SelectionBoxNodeContext.Provider>
+          </WorkflowEditContext.Provider>
           </WorkflowRunContext.Provider>
           </NodeValueContext.Provider>
         </div>
