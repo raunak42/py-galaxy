@@ -1,25 +1,25 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   Copy,
+  ExternalLink,
   FileJson,
   Upload,
+  ImagePlus,
   Loader2,
   MoreHorizontal,
   PanelLeft,
   Pencil,
   Plus,
   Search,
-  Sparkles,
   Trash2,
-  Workflow,
+  FileOutput,
 } from "lucide-react";
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { toast, Toaster } from "@/lib/toast";
 import { Sidebar } from "@/app/workflows/[workflow_id]/canvas/_components/sidebar";
+import { sampleWorkflowNodes, sampleWorkflowEdges } from "@/app/workflows/[workflow_id]/canvas/_lib/initial-workflow";
 
 type WorkflowListItem = {
   id: string;
@@ -60,8 +60,11 @@ function workflowHref(id: string) {
 }
 
 function getWorkflowCoverImage(workflow: WorkflowListItem) {
-  const nodeValueImage = typeof (workflow.nodeValues as Record<string, Record<string, unknown>> | undefined)?.["request-inputs"]?.image_field === "string"
-    ? (workflow.nodeValues as Record<string, Record<string, string>>)["request-inputs"].image_field
+  const nodeValues = workflow.nodeValues as Record<string, unknown> | undefined;
+  if (typeof nodeValues?.__cover__ === "string" && nodeValues.__cover__) return nodeValues.__cover__;
+
+  const nodeValueImage = typeof (nodeValues as Record<string, Record<string, unknown>> | undefined)?.["request-inputs"]?.image_field === "string"
+    ? (nodeValues as Record<string, Record<string, string>>)["request-inputs"].image_field
     : "";
   if (nodeValueImage) return nodeValueImage;
 
@@ -92,44 +95,72 @@ function WorkflowPreview({ large = false, coverUrl = "" }: { large?: boolean; co
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#f6f6f4]">
       <div className="absolute inset-0 opacity-[0.55]" style={{ backgroundImage: "radial-gradient(#d8d8dc 1px, transparent 1px)", backgroundSize: large ? "18px 18px" : "14px 14px" }} />
-      <div className="absolute left-[10%] top-[18%] h-10 w-24 rounded-[14px] border border-[#e0e0e2] bg-white shadow-sm" />
-      <div className="absolute left-[39%] top-[15%] h-9 w-28 rounded-[14px] border border-[#e0e0e2] bg-white shadow-sm" />
-      <div className="absolute left-[64%] top-[24%] h-10 w-24 rounded-[14px] border border-[#e0e0e2] bg-white shadow-sm" />
-      <div className="absolute left-[25%] top-[52%] h-9 w-24 rounded-[14px] border border-[#e0e0e2] bg-white shadow-sm" />
-      <div className="absolute left-[56%] top-[58%] h-10 w-28 rounded-[14px] border border-[#e0e0e2] bg-white shadow-sm" />
-      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 320 190" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M70 55 C130 45 140 50 190 52" fill="none" stroke="#8b5cf6" strokeWidth="2.2" strokeLinecap="round" />
-        <path d="M220 62 C252 74 250 84 278 88" fill="none" stroke="#3b82f6" strokeWidth="2.2" strokeLinecap="round" />
-        <path d="M112 110 C160 95 170 110 210 122" fill="none" stroke="#f59e0b" strokeWidth="2.2" strokeLinecap="round" />
-      </svg>
-      <div className="absolute bottom-4 left-4 flex items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-medium text-[#3d3d41] shadow-sm backdrop-blur">
-        <Sparkles className="h-3 w-3 text-[#4f46e5]" /> Py Flow
-      </div>
     </div>
   );
 }
 
-function WorkflowCard({ workflow, onRename, onDuplicate, onDelete, onExport }: {
+function WorkflowCard({ workflow, onRename, onDuplicate, onDelete, onExport, onCoverUpdate, onNavigate }: {
   workflow: WorkflowListItem;
   onRename: (workflow: WorkflowListItem) => void;
   onDuplicate: (workflow: WorkflowListItem) => void;
   onDelete: (workflow: WorkflowListItem) => void;
   onExport: (workflow: WorkflowListItem) => void;
+  onCoverUpdate: (workflowId: string, url: string) => void;
+  onNavigate: (href: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const coverUrl = getWorkflowCoverImage(workflow);
 
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (cardRef.current && !cardRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const handleCoverUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingCover(true);
+    try {
+      const { uploadImageWithTransloadit } = await import("@/app/workflows/[workflow_id]/canvas/_components/request-fields");
+      const url = await uploadImageWithTransloadit(file);
+      onCoverUpdate(workflow.id, url);
+    } catch {
+      toast({ description: "Failed to upload cover image" });
+    } finally {
+      setUploadingCover(false);
+      if (coverInputRef.current) coverInputRef.current.value = "";
+    }
+  };
+
   return (
-    <div className="group/card relative w-full max-w-[250px]">
+    <div ref={cardRef} className="group/card relative w-full max-w-[250px]">
       <div className="relative aspect-[250/162] overflow-hidden rounded-[16px] border-[0.5px] border-[#e0e0e2] bg-white transition-colors group-hover/card:border-[#cfcfd3]">
-        <Link href={workflowHref(workflow.id)} className="block h-full w-full" aria-label={`Open ${workflow.name}`}>
+        <button type="button" onClick={() => onNavigate(workflowHref(workflow.id))} className="block h-full w-full cursor-pointer text-left" aria-label={`Open ${workflow.name}`}>
           <WorkflowPreview coverUrl={coverUrl} />
-        </Link>
-        <Link href={workflowHref(workflow.id)} className="absolute left-2 top-2 rounded-md bg-white/80 p-1 text-[#737373] opacity-0 transition-all hover:bg-white hover:text-[#1b1b18] focus:opacity-100 group-hover/card:opacity-100" aria-label={`Open ${workflow.name}`}>
-          <Workflow className="h-4 w-4" />
-        </Link>
-        <button type="button" onClick={() => setOpen((value) => !value)} className="absolute right-2 top-2 rounded-md bg-white/80 p-1 text-[#737373] opacity-0 transition-all hover:bg-white hover:text-[#1b1b18] focus:opacity-100 group-hover/card:opacity-100" aria-label={`Actions for ${workflow.name}`}>
-          <MoreHorizontal className="h-4 w-4" />
+        </button>
+        <input ref={coverInputRef} type="file" accept="image/*" className="hidden" onChange={handleCoverUpload} />
+        {uploadingCover && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40">
+            <Loader2 className="h-6 w-6 animate-spin text-white" />
+          </div>
+        )}
+        <button
+          type="button"
+          disabled={uploadingCover}
+          onClick={() => coverInputRef.current?.click()}
+          className="absolute left-2 top-2 rounded-md bg-white/80 p-1 text-[#737373] opacity-0 transition-all hover:bg-white hover:text-[#1b1b18] focus:opacity-100 group-hover/card:opacity-100"
+          aria-label={`Change cover for ${workflow.name}`}
+        >
+          <ImagePlus className="h-4 w-4" />
         </button>
         {workflow.status === "RUNNING" ? (
           <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
@@ -138,34 +169,47 @@ function WorkflowCard({ workflow, onRename, onDuplicate, onDelete, onExport }: {
         ) : null}
       </div>
 
+      <div className="absolute right-2 top-2 z-50">
+        <button type="button" onClick={() => setOpen((value) => !value)} className="rounded-md bg-white/80 p-1 text-[#737373] opacity-0 transition-all hover:bg-white hover:text-[#1b1b18] focus:opacity-100 group-hover/card:opacity-100" aria-label={`Actions for ${workflow.name}`}>
+          <MoreHorizontal className="h-4 w-4 rotate-90" />
+        </button>
+        {open ? (
+          <div className="absolute right-0 w-40 overflow-hidden rounded-[18px] border border-[#e5e5e533] bg-[#f6f6f4] p-1 text-[#1b1b18] shadow-lg" style={{ bottom: "calc(100% + 4px)" }}>
+            <button type="button" onClick={() => onNavigate(workflowHref(workflow.id))} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm hover:bg-[#eeeeec]"><ExternalLink className="h-4 w-4" /> Open</button>
+            <button type="button" onClick={() => { setOpen(false); onRename(workflow); }} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm hover:bg-[#eeeeec]"><Pencil className="h-4 w-4" /> Rename</button>
+            <button type="button" onClick={() => { setOpen(false); onDuplicate(workflow); }} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm hover:bg-[#eeeeec]"><Copy className="h-4 w-4" /> Duplicate</button>
+            <button type="button" onClick={() => { setOpen(false); onExport(workflow); }} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm hover:bg-[#eeeeec]"><FileJson className="h-4 w-4" /> Export JSON</button>
+            <div className="my-1 h-px bg-[#e0e0e2]" />
+            <button type="button" onClick={() => { setOpen(false); onDelete(workflow); }} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /> Delete</button>
+          </div>
+        ) : null}
+      </div>
+
       <div className="mt-2 px-1">
-        <Link href={workflowHref(workflow.id)} className="block truncate text-sm font-medium leading-5 text-[#1b1b18] hover:text-[#4f46e5]">
+        <button type="button" onClick={() => onNavigate(workflowHref(workflow.id))} className="block truncate text-sm font-medium leading-5 text-[#1b1b18] hover:text-[#4f46e5]">
           {workflow.name}
-        </Link>
+        </button>
         <div className="mt-0.5 text-xs leading-4 text-[#737373]">Edited {formatRelativeTime(workflow.updatedAt)}</div>
       </div>
 
-      {open ? (
-        <div className="absolute right-0 top-11 z-50 w-40 overflow-hidden rounded-[18px] border border-[#e5e5e533] bg-[#f6f6f4] p-1 text-[#1b1b18] shadow-lg">
-          <Link href={workflowHref(workflow.id)} className="flex h-9 items-center gap-2 rounded-[14px] px-3 text-sm hover:bg-[#eeeeec]">Open</Link>
-          <button type="button" onClick={() => { setOpen(false); onRename(workflow); }} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm hover:bg-[#eeeeec]"><Pencil className="h-4 w-4" /> Rename</button>
-          <button type="button" onClick={() => { setOpen(false); onDuplicate(workflow); }} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm hover:bg-[#eeeeec]"><Copy className="h-4 w-4" /> Duplicate</button>
-          <button type="button" onClick={() => { setOpen(false); onExport(workflow); }} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm hover:bg-[#eeeeec]"><FileJson className="h-4 w-4" /> Export JSON</button>
-          <div className="my-1 h-px bg-[#e0e0e2]" />
-          <button type="button" onClick={() => { setOpen(false); onDelete(workflow); }} className="flex h-9 w-full items-center gap-2 rounded-[14px] px-3 text-left text-sm text-red-600 hover:bg-red-50"><Trash2 className="h-4 w-4" /> Delete</button>
-        </div>
-      ) : null}
     </div>
   );
 }
 
 export default function FlowPage() {
-  const router = useRouter();
   const importInputRef = useRef<HTMLInputElement>(null);
   const [workflows, setWorkflows] = useState<WorkflowListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [imageLoading, setImageLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<WorkflowListItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const deletingRef = useRef(false);
+  const [navigating, setNavigating] = useState(false);
+  const [trialPickerOpen, setTrialPickerOpen] = useState(false);
+  const [cloningTrial, setCloningTrial] = useState(false);
+  const navOverlayRef = useRef<HTMLDivElement>(null);
 
   const loadWorkflows = async () => {
     setLoading(true);
@@ -182,12 +226,60 @@ export default function FlowPage() {
   };
 
   useEffect(() => {
+    const img = new Image();
+    img.onload = () => setImageLoading(false);
+    img.onerror = () => setImageLoading(false);
+    img.src = "https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/0c89d91b6bb0447bae12f04a394a5c7a/3dec2c395e5343c2ac16621ba924929f/da26c20cafb648bda1a4a08bbceb6adb.jpg";
+    return () => { img.onload = null; img.onerror = null; };
+  }, []);
+
+  useEffect(() => {
     console.log("[Py] Candidate LinkedIn: https://www.linkedin.com/in/raunak-lanjewar/");
     const frame = requestAnimationFrame(() => {
       void loadWorkflows();
     });
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDeleteTarget(null);
+      if (e.key === "Enter" && deleteTarget && !deletingRef.current) confirmDelete();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [deleteTarget]);
+
+  const navigateTo = (href: string) => {
+    setNavigating(true);
+    navOverlayRef.current?.classList.remove("hidden");
+    requestAnimationFrame(() => {
+      window.location.href = href;
+    });
+  };
+
+  const cloneTrialWorkflow = async () => {
+    setCloningTrial(true);
+    try {
+      const response = await fetch("/api/workflows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Trial Task Workflow Copy",
+          nodes: sampleWorkflowNodes,
+          edges: sampleWorkflowEdges,
+        }),
+      });
+      const json = await readJsonResponse<{ workflow?: WorkflowListItem; error?: string }>(response);
+      if (!response.ok || !json.workflow) throw new Error(json.error ?? "Failed to create workflow");
+      setTrialPickerOpen(false);
+      navigateTo(workflowHref(json.workflow.id));
+    } catch (error) {
+      toast({ description: error instanceof Error ? error.message : "Failed to create workflow" });
+      setCloningTrial(false);
+    }
+  };
 
   const filteredWorkflows = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -204,7 +296,7 @@ export default function FlowPage() {
       });
       const json = await readJsonResponse<{ workflow?: WorkflowListItem; error?: string }>(response);
       if (!response.ok || !json.workflow) throw new Error(json.error ?? "Failed to create workflow");
-      router.push(workflowHref(json.workflow.id));
+      navigateTo(workflowHref(json.workflow.id));
     } catch (error) {
       toast({ description: error instanceof Error ? error.message : "Failed to create workflow" });
     }
@@ -242,20 +334,46 @@ export default function FlowPage() {
     }
   };
 
-  const deleteWorkflow = async (workflow: WorkflowListItem) => {
-    if (!window.confirm(`Delete “${workflow.name}”?`)) return;
+  const deleteWorkflow = (workflow: WorkflowListItem) => {
+    setDeleteTarget(workflow);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
     try {
-      const response = await fetch(`/api/workflows/${workflow.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/workflows/${deleteTarget.id}`, { method: "DELETE" });
       const json = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(json.error ?? "Failed to delete workflow");
-      setWorkflows((current) => current.filter((item) => item.id !== workflow.id));
+      setWorkflows((current) => current.filter((item) => item.id !== deleteTarget.id));
+      setDeleteTarget(null);
     } catch (error) {
       toast({ description: error instanceof Error ? error.message : "Failed to delete workflow" });
+      setDeleteTarget(null);
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
     }
   };
 
   const exportWorkflow = (workflow: WorkflowListItem) => {
     downloadJson(`${workflow.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "workflow"}.json`, workflow);
+  };
+
+  const handleCoverUpdate = async (workflowId: string, url: string) => {
+    try {
+      await fetch(`/api/workflows/${workflowId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeValues: { __cover__: url } }),
+      });
+      setWorkflows((current) => current.map((item) =>
+        item.id === workflowId ? { ...item, nodeValues: { ...(item.nodeValues as Record<string, unknown>), __cover__: url } } : item,
+      ));
+    } catch {
+      toast({ description: "Failed to save cover image" });
+    }
   };
 
   const importWorkflow = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -271,14 +389,15 @@ export default function FlowPage() {
   };
 
   return (
-    <ReactFlowProvider>
-      <main className="h-screen bg-white text-[#1b1b18]">
-        <Toaster />
-        <div className="flex h-screen w-full overflow-hidden">
+    <>
+      <ReactFlowProvider>
+        <main className="h-screen bg-white text-[#1b1b18]">
+          <Toaster />
+          <div className={`flex h-screen w-full overflow-hidden ${loading || imageLoading || navigating ? "blur-sm" : ""}`}>
           <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
 
           <section className="flex min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-[#f9f9f9]">
-          <div className="min-h-full w-full bg-[#f9f9f9] pb-8 pl-[60px] pr-[60px] pt-8">
+          <div className="min-h-full w-full bg-[#f9f9f9] pl-[60px] pr-[60px] pt-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-start gap-2">
                 <button type="button" onClick={() => setSidebarOpen(true)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#737373] transition-colors hover:bg-[#eeeeec] hover:text-[#1b1b18] md:hidden" aria-label="Open sidebar">
@@ -308,9 +427,9 @@ export default function FlowPage() {
                 </div>
               </div>
               <div className="mt-6 flex gap-7 overflow-x-auto scroll-smooth pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <button type="button" onClick={() => void createWorkflow("Trial Task Workflow")} className="group w-[80vw] max-w-xs flex-none overflow-hidden rounded-[16px] border-[0.5px] border-[#e0e0e2] bg-[#f4f4f4] text-left transition-colors hover:border-[#c9c9cd] sm:w-72 lg:w-80">
+                <button type="button" onClick={() => setTrialPickerOpen(true)} className="group w-[80vw] max-w-xs flex-none overflow-hidden rounded-[16px] border-[0.5px] border-[#e0e0e2] bg-[#f4f4f4] text-left transition-colors hover:border-[#c9c9cd] sm:w-72 lg:w-80">
                   <div className="aspect-[320/217] w-full overflow-hidden">
-                    <WorkflowPreview large coverUrl={getWorkflowCoverImage(workflows.find((workflow) => workflow.name === "Trial Task Workflow") ?? workflows[0] ?? { id: "", name: "", updatedAt: "", status: "READY" })} />
+                    <WorkflowPreview large coverUrl="https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/0c89d91b6bb0447bae12f04a394a5c7a/3dec2c395e5343c2ac16621ba924929f/da26c20cafb648bda1a4a08bbceb6adb.jpg" />
                   </div>
                   <div className="px-4 py-3 text-sm font-medium leading-5 text-[#1b1b18]">Trial Task Workflow</div>
                 </button>
@@ -340,10 +459,10 @@ export default function FlowPage() {
                   ))}
                 </div>
               ) : workflows.length === 0 ? (
-                <div className="mt-12 rounded-[16px] border-[0.5px] border-[#e0e0e2] bg-[#f4f4f4] px-6 py-8 text-left">
-                  <h3 className="text-xl font-medium leading-7 text-[#1f2933]">No workflows yet</h3>
-                  <p className="mt-2 text-base leading-6 text-[#6b7280]">Create your first workflow to start building.</p>
-                  <button type="button" onClick={() => void createWorkflow()} className="mt-6 inline-flex h-12 items-center justify-center rounded-[12px] bg-[#444444] px-6 text-base font-semibold text-white transition-colors hover:bg-[#333333]">
+                <div className="mt-12 flex flex-col items-center justify-center text-center">
+                  <div className="text-base font-medium leading-6 text-[#3d3d41]">No workflows yet</div>
+                  <div className="mt-1 text-sm font-medium leading-5 text-[#858589]">Create your first workflow to start building.</div>
+                  <button type="button" onClick={() => void createWorkflow()} className="mt-4 inline-flex h-9 items-center justify-center rounded-lg bg-[#444444] px-3 text-sm font-semibold text-white transition-colors hover:bg-[#333333]">
                     Create workflow
                   </button>
                 </div>
@@ -355,15 +474,83 @@ export default function FlowPage() {
               ) : (
                 <div className="mt-5 grid grid-cols-[repeat(auto-fill,minmax(250px,250px))] gap-x-[69px] gap-y-9 max-[700px]:grid-cols-1 max-[700px]:gap-y-7">
                   {filteredWorkflows.map((workflow) => (
-                    <WorkflowCard key={workflow.id} workflow={workflow} onRename={renameWorkflow} onDuplicate={duplicateWorkflow} onDelete={deleteWorkflow} onExport={exportWorkflow} />
+                    <WorkflowCard key={workflow.id} workflow={workflow} onRename={renameWorkflow} onDuplicate={duplicateWorkflow} onDelete={deleteWorkflow} onExport={exportWorkflow} onCoverUpdate={handleCoverUpdate} onNavigate={navigateTo} />
                   ))}
                 </div>
               )}
             </section>
+            <div className="h-16" />
           </div>
           </section>
         </div>
       </main>
     </ReactFlowProvider>
+      <div ref={navOverlayRef} className={`fixed inset-0 z-50 flex items-center justify-center backdrop-blur-md ${loading || imageLoading || navigating ? "" : "hidden"}`}>
+        <Loader2 className="h-8 w-8 animate-spin text-[#444444]" style={{ animationDuration: "0.5s" }} />
+      </div>
+
+      {trialPickerOpen && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/80" onClick={() => { if (!cloningTrial) setTrialPickerOpen(false); }} />
+          <div className="fixed left-[50%] top-[50%] z-50 grid w-full max-w-md translate-x-[-50%] translate-y-[-50%] gap-4 border border-[#e5e5e5] bg-[#fafaf9] p-6 shadow-lg sm:rounded-[18px]">
+            <h2 className="text-lg font-semibold text-[#1b1b18]">Trial Task Workflow</h2>
+            <p className="text-sm leading-5 text-[#737373]">This is a read-only template. Create your own copy to edit and run.</p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void cloneTrialWorkflow()}
+                disabled={cloningTrial}
+                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-[18px] bg-[#444444] px-4 text-sm font-medium text-white transition-colors hover:bg-[#333333] disabled:opacity-70"
+              >
+                {cloningTrial ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileOutput className="h-4 w-4" />
+                )}
+                Open a clone
+              </button>
+              <button
+                type="button"
+                onClick={() => setTrialPickerOpen(false)}
+                disabled={cloningTrial}
+                className="h-10 flex-1 rounded-[18px] border border-[#e5e7eb] bg-[#fafaf9] px-4 text-sm font-medium text-[#1b1b18] transition-colors hover:bg-[#eeeeec] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {deleteTarget && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/80" onClick={() => setDeleteTarget(null)} />
+          <div className="fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-[#e5e5e5] bg-[#fafaf9] p-6 shadow-lg sm:rounded-[18px]">
+            <h2 className="text-lg font-semibold text-[#1b1b18]">Delete Workflow</h2>
+            <p className="text-sm text-[#737373]">
+              Are you sure you want to delete &ldquo;{deleteTarget.name}&rdquo;? This action cannot be undone.
+            </p>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="h-9 rounded-[18px] border border-[#e5e7eb] bg-[#fafaf9] px-4 text-sm font-medium text-[#1b1b18]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDelete()}
+                disabled={deleting}
+                className="ml-2 inline-flex h-9 items-center gap-1.5 rounded-[18px] bg-red-600 px-4 text-sm font-medium text-white disabled:opacity-70"
+              >
+                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Delete
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </>
   );
 }
