@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { task, wait } from "@trigger.dev/sdk";
@@ -28,6 +28,68 @@ function imageInputToBuffer(input: string) {
     throw new Error("Browser blob: image URLs cannot be fetched by Trigger.dev. Please upload as a data URL or remote URL.");
   }
   return null;
+}
+
+type TransloaditFile = { ssl_url?: string; url?: string; original_name?: string; name?: string; mime?: string; size?: number };
+type TransloaditAssembly = {
+  ok?: string;
+  error?: string;
+  message?: string;
+  assembly_id?: string;
+  assembly_ssl_url?: string;
+  assembly_url?: string;
+  uploads?: TransloaditFile[];
+  results?: Record<string, TransloaditFile[]>;
+};
+
+function findTransloaditFile(status: TransloaditAssembly): TransloaditFile | null {
+  for (const group of Object.values(status.results ?? {})) {
+    const file = group.find((item) => item.ssl_url || item.url);
+    if (file) return file;
+  }
+  return status.uploads?.find((item) => item.ssl_url || item.url) ?? null;
+}
+
+async function uploadImageOutputToTransloadit(buffer: Buffer, filename: string) {
+  const authKey = process.env.TRANSLOADIT_AUTH_KEY ?? process.env.TRANSLOADIT_KEY;
+  const authSecret = process.env.TRANSLOADIT_AUTH_SECRET ?? process.env.TRANSLOADIT_SECRET;
+  if (!authKey || !authSecret) {
+    throw new Error("Missing TRANSLOADIT_AUTH_KEY/TRANSLOADIT_AUTH_SECRET for cropped image output upload");
+  }
+
+  const params = JSON.stringify({
+    auth: {
+      key: authKey,
+      expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      nonce: randomUUID(),
+    },
+    steps: {
+      uploaded: {
+        robot: "/file/filter",
+        use: ":original",
+        result: true,
+      },
+    },
+  });
+  const signature = `sha384:${createHmac("sha384", authSecret).update(params).digest("hex")}`;
+  const form = new FormData();
+  form.append("params", params);
+  form.append("signature", signature);
+  form.append("file", new Blob([new Uint8Array(buffer)], { type: "image/png" }), filename);
+
+  const response = await fetch("https://api2.transloadit.com/assemblies?wait=true", {
+    method: "POST",
+    body: form,
+  });
+  const status = await response.json() as TransloaditAssembly;
+  if (!response.ok || status.error) {
+    throw new Error(status.message ?? status.error ?? "Transloadit output upload failed");
+  }
+
+  const file = findTransloaditFile(status);
+  const url = file?.ssl_url ?? file?.url;
+  if (!url) throw new Error("Transloadit output upload completed without a URL");
+  return { url, assemblyId: status.assembly_id, file };
 }
 
 function runCommand(command: string, args: string[]) {
@@ -80,9 +142,11 @@ export const cropImageTask = task({
 
       await runCommand("ffmpeg", ["-y", "-i", inputPath, "-vf", filter, "-frames:v", "1", outputPath]);
       const output = await readFile(outputPath);
+      const uploaded = await uploadImageOutputToTransloadit(output, `crop-${runId}.png`);
 
       return {
-        outputImageUrl: `data:image/png;base64,${output.toString("base64")}`,
+        outputImageUrl: uploaded.url,
+        outputAssemblyId: uploaded.assemblyId,
         durationMs: Date.now() - startedAt,
         crop: { x: payload.x, y: payload.y, width: payload.width, height: payload.height },
       };
