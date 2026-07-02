@@ -27,9 +27,7 @@ export function Sidebar({
   open: boolean;
   setOpen: (v: boolean) => void;
 }) {
-  const [isMobileSidebar, setIsMobileSidebar] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 768 : false,
-  );
+  const [isMobileSidebar, setIsMobileSidebar] = useState(false);
   const [footerDetailsOpen, setFooterDetailsOpen] = useState(true);
   const { user } = useUser();
   const displayName = user?.fullName || user?.username || user?.primaryEmailAddress?.emailAddress || "Account";
@@ -47,23 +45,30 @@ export function Sidebar({
   }, [setOpen]);
 
   const navIconClass = "h-5 w-5 shrink-0 text-[#3d3d41]";
-  const disabledNavIconClass = navIconClass;
+  const disabledNavIconClass = "h-5 w-5 shrink-0 text-[#a3a3a7]";
   const navItemClass =
     "chat-sidebar-nav-item group flex w-full items-center gap-[9px] overflow-clip rounded-lg p-2 text-sm font-normal leading-5 tracking-normal text-[#3d3d41] transition-colors hover:bg-[#dadada]";
   const disabledNavItemClass =
-    "chat-sidebar-nav-item group flex w-full items-center gap-[9px] overflow-clip rounded-lg p-2 text-sm font-normal leading-5 tracking-normal text-[#3d3d41] transition-colors hover:cursor-not-allowed hover:bg-[#dadada]";
+    "chat-sidebar-nav-item group flex w-full items-center gap-[9px] overflow-clip rounded-lg p-2 text-sm font-normal leading-5 tracking-normal text-[#a3a3a7] transition-colors hover:cursor-not-allowed hover:bg-[#dadada]";
   const collapsedIconClass =
     "inline-flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:bg-[#f0f0f0]";
   const disabledCollapsedIconClass =
-    "inline-flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#3d3d41] transition-colors hover:cursor-not-allowed hover:bg-[#f0f0f0]";
+    "inline-flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-[18px] text-sm font-medium leading-5 text-[#a3a3a7] transition-colors hover:cursor-not-allowed hover:bg-[#f0f0f0]";
 
   return (
-    <div
+    <>
+      {isMobileSidebar && open && (
+        <div
+          className="fixed inset-0 z-40 bg-black/30"
+          onClick={() => setOpen(false)}
+        />
+      )}
+      <div
       className={`chat-sidebar-shell flex h-full flex-shrink-0 flex-col overflow-hidden transition-[width,min-width,max-width,opacity,transform] duration-200 ease-in-out ${
         isMobileSidebar ? "fixed inset-y-0 left-0 z-50" : "relative"
       }`}
       style={{
-        width: isMobileSidebar ? 0.5 : open ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH,
+        width: isMobileSidebar ? (open ? SIDEBAR_EXPANDED_WIDTH : 0) : open ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_COLLAPSED_WIDTH,
         minWidth: isMobileSidebar ? 0 : undefined,
         backgroundColor: "rgb(240, 240, 240)",
         borderRight: "0.5px solid rgb(224, 224, 226)",
@@ -104,6 +109,9 @@ export function Sidebar({
           {mainNavItems.map(({ icon: Icon, label, href }) => {
             const isTasks = label === "Tasks";
             const isFlow = label === "Flow";
+            const iconClass = isFlow
+              ? (isTasks ? "h-[18px] w-[18px] shrink-0 text-[#3d3d41]" : navIconClass)
+              : (isTasks ? "h-[18px] w-[18px] shrink-0 text-[#a3a3a7]" : disabledNavIconClass);
             return (
               <HoverTooltip key={label} text={isFlow ? label : `${label} unavailable`} side="right" scaleWithZoom={false} triggerClassName="inline-flex">
                 <a
@@ -117,7 +125,7 @@ export function Sidebar({
                   <Icon
                     size={isTasks ? 18 : 20}
                     strokeWidth={2}
-                    className={isTasks ? "h-[18px] w-[18px] shrink-0 text-[#3d3d41]" : navIconClass}
+                    className={iconClass}
                   />
                 </a>
               </HoverTooltip>
@@ -136,7 +144,7 @@ export function Sidebar({
 
       {/* 2. Expanded state */}
       <div
-        className={`h-full flex-col ${open && !isMobileSidebar ? "flex visible" : "hidden"}`}
+        className={`h-full flex-col ${open ? "flex visible" : "hidden"}`}
         style={{ width: SIDEBAR_EXPANDED_WIDTH }}
       >
         <div className="flex h-[52px] shrink-0 items-start justify-between px-4 pt-2">
@@ -177,6 +185,9 @@ export function Sidebar({
             {mainNavItems.map(({ icon: Icon, label, href }) => {
               const isTasks = label === "Tasks";
               const isFlow = label === "Flow";
+              const iconClass = isFlow
+                ? (isTasks ? "h-[18px] w-[18px] shrink-0 text-[#3d3d41]" : navIconClass)
+                : (isTasks ? "h-[18px] w-[18px] shrink-0 text-[#a3a3a7]" : disabledNavIconClass);
               return (
                 <a
                   key={label}
@@ -190,7 +201,7 @@ export function Sidebar({
                     <Icon
                       size={isTasks ? 18 : 20}
                       strokeWidth={2}
-                      className={isTasks ? "h-[18px] w-[18px] shrink-0 text-[#3d3d41]" : navIconClass}
+                      className={iconClass}
                     />
                     <span className="truncate">{label}</span>
                   </span>
@@ -249,7 +260,8 @@ export function Sidebar({
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
