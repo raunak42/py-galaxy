@@ -1,4 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
+import { GEMINI_MODEL_NAME } from "./constants";
 export function cloneWorkflowSnapshot(nodes: Node[], edges: Edge[]) {
   return {
     nodes: nodes.map((node) => ({ ...node, data: { ...(node.data ?? {}) }, position: { ...node.position } })),
@@ -31,7 +32,7 @@ export function nodeHistoryLabel(node: Node) {
   if (node.id === "gemini-final") return "Final Gemini — Marketing post";
   if (node.id === "crop-1") return "Crop Image #1 — Product crop";
   if (node.id === "crop-2") return "Crop Image #2 — Banner crop";
-  if (node.type === "geminiPreview") return "Gemini 3.1 Pro";
+  if (node.type === "geminiPreview") return GEMINI_MODEL_NAME;
   if (node.type === "cropImage") return "Crop Image";
   if (node.type === "request") return "Request-Inputs";
   if (node.type === "response") return "Response";
