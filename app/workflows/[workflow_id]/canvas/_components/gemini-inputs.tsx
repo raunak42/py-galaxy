@@ -5,7 +5,7 @@ import { Loader2, Maximize2, X } from "lucide-react";
 import { IconUpload } from "@tabler/icons-react";
 import { toast } from "@/lib/toast";
 import { displayConnectedValue, valueToStringArray } from "../_lib/utils";
-import { useConnectedInputValue, useConnectedInputValues, useNodeValueContext } from "../_lib/contexts";
+import { useConnectedInputValue, useConnectedInputValues, useNodeValueContext, useWorkflowEditContext } from "../_lib/contexts";
 import { AddToRequestButton, FieldHandle } from "./edges";
 import { HoverTooltip, InfoTooltip } from "./tooltips";
 import { MediaLibraryModal } from "./media-library";
@@ -85,21 +85,37 @@ export function GeminiUpload({
   showRequirements?: boolean;
   handleColor?: string;
 }) {
+  const { values, setNodeHandleValue } = useNodeValueContext();
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; url: string; file: File }[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState(() => {
+    const stored = values[nodeId]?.[id];
+    if (Array.isArray(stored) && stored.length > 0) {
+      return (stored as string[]).map((url) => ({ name: url.split("/").pop() ?? url, url, file: new File([], "") }));
+    }
+    return [];
+  });
   const [uploading, setUploading] = useState(false);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const connected = useConnectedInputValue(nodeId, id);
   const connectedValues = useConnectedInputValues(nodeId, id);
   const isConnected = connected.isConnected;
-  const { setNodeHandleValue } = useNodeValueContext();
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[id];
+    if (Array.isArray(stored) && stored.length > 0 && stored !== uploadedFiles.map((f) => f.url)) {
+      const urls = stored as string[];
+      setUploadedFiles(urls.map((url) => ({ name: url.split("/").pop() ?? url, url, file: new File([], "") })));
+    }
+  }, [id, nodeId, uploadedFiles, values]);
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, uploadedFiles.map((file) => file.url));
   }, [id, nodeId, setNodeHandleValue, uploadedFiles]);
 
   const handleUpload = useCallback(async (file: File) => {
+    recordSnapshot();
     setUploading(true);
     try {
       const url = id === "image" ? await uploadImageWithTransloadit(file) : await readFileAsDataUrl(file);
@@ -109,7 +125,7 @@ export function GeminiUpload({
     } finally {
       setUploading(false);
     }
-  }, [id]);
+  }, [id, recordSnapshot]);
 
   const removeFile = useCallback((index: number) => {
     setUploadedFiles((prev) => {

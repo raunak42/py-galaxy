@@ -10,11 +10,40 @@ import { GeminiTextarea, GeminiUpload } from "./gemini-inputs";
 import { GeminiSettings } from "./gemini-settings";
 import { MagicaNodeRunButton, NodeMenu } from "./menus";
 import { HoverTooltip, InfoTooltip } from "./tooltips";
+import { GEMINI_MODEL_NAME } from "../_lib/constants";
 export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Record<string, unknown> }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [prompt, setPromptState] = useState(String(data?.prompt ?? ""));
-  const [systemPrompt, setSystemPromptState] = useState(String(data?.systemPrompt ?? ""));
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [prompt, setPromptState] = useState(() => {
+    const stored = values[nodeId]?.prompt;
+    return typeof stored === "string" ? stored : String(data?.prompt ?? "");
+  });
+  const [systemPrompt, setSystemPromptState] = useState(() => {
+    const stored = values[nodeId]?.["system-prompt"];
+    return typeof stored === "string" ? stored : String(data?.systemPrompt ?? "");
+  });
+  const { recordSnapshot } = useWorkflowEditContext();
+  const [response, setResponse] = useState(() => {
+    const stored = values[nodeId]?.response;
+    return typeof stored === "string" ? stored : "";
+  });
+  const [runError, setRunError] = useState("");
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    const stored = values[nodeId]?.prompt;
+    if (typeof stored === "string" && stored !== prompt) {
+      setPromptState(stored);
+    }
+  }, [nodeId, prompt, values]);
+  useEffect(() => {
+    const stored = values[nodeId]?.["system-prompt"];
+    if (typeof stored === "string" && stored !== systemPrompt) {
+      setSystemPromptState(stored);
+    }
+  }, [nodeId, systemPrompt, values]);
+
   const setPrompt = useCallback((value: string) => {
     recordSnapshot();
     setPromptState(value);
@@ -23,14 +52,9 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
     recordSnapshot();
     setSystemPromptState(value);
   }, [recordSnapshot]);
-  const [response, setResponse] = useState("");
-  const [runError, setRunError] = useState("");
-  const [running, setRunning] = useState(false);
   const runTokenRef = useRef(0);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
-  const { values, setNodeHandleValue } = useNodeValueContext();
   const { runningNodeIds, pendingNodeIds, addHistoryEntry } = useWorkflowRunContext();
-  const { recordSnapshot } = useWorkflowEditContext();
   const connectedPrompt = useConnectedInputValue(nodeId, "prompt");
   const connectedSystemPrompt = useConnectedInputValue(nodeId, "system-prompt");
   const connectedImage = useConnectedInputValues(nodeId, "image");
@@ -58,7 +82,11 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
     setRunning(true);
     setRunError("");
     setResponse("");
-    const geminiInputs = {
+    const setting = (key: string, fallback: string) => {
+      const stored = values[nodeId]?.[`setting-${key}`];
+      return typeof stored === "string" ? stored : fallback;
+    };
+    const geminiInputs: Record<string, unknown> = {
       prompt: effectivePrompt,
       systemPrompt: effectiveSystemPrompt.trim() || undefined,
       imageUrls: connectedImage.isConnected ? connectedImage.values.flatMap(valueToStringArray) : valueToStringArray(values[nodeId]?.image),
@@ -66,7 +94,17 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
       audioUrls: connectedAudio.isConnected ? connectedAudio.values.flatMap(valueToStringArray) : valueToStringArray(values[nodeId]?.audio),
       fileUrls: connectedFile.isConnected ? connectedFile.values.flatMap(valueToStringArray) : valueToStringArray(values[nodeId]?.file),
       model: "gemini-3.1-pro",
+      temperature: Number(setting("Temperature", "0.7")),
+      maxOutputTokens: Number(setting("Max Tokens", "2048")),
+      topP: Number(setting("Top P", "1")),
+      topK: Number(setting("Top K", "0")),
     };
+    const stopRaw = setting("Stop Sequences", "");
+    if (stopRaw) geminiInputs.stopSequences = stopRaw.split(",").map((s: string) => s.trim()).filter(Boolean);
+    const jsonModeRaw = values[nodeId]?.["setting-JSON Mode"];
+    if (jsonModeRaw === true || String(jsonModeRaw).toLowerCase() === "true") {
+      geminiInputs.responseMimeType = "application/json";
+    }
     try {
       const res = await fetch("/api/tasks/gemini", {
         method: "POST",
@@ -85,7 +123,7 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
         scope: "single",
         status: "success",
         durationMs: Date.now() - startedAt,
-        nodeDetails: [{ nodeId, label: "Gemini 3.1 Pro", status: "success", durationMs: Date.now() - startedAt, inputs: geminiInputs, output }],
+        nodeDetails: [{ nodeId, label: GEMINI_MODEL_NAME, status: "success", durationMs: Date.now() - startedAt, inputs: geminiInputs, output }],
       });
     } catch (error) {
       if (runTokenRef.current !== runToken) return;
@@ -96,7 +134,7 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
         scope: "single",
         status: "failed",
         durationMs: Date.now() - startedAt,
-        nodeDetails: [{ nodeId, label: "Gemini 3.1 Pro", status: "failed", durationMs: Date.now() - startedAt, inputs: geminiInputs, error: message }],
+        nodeDetails: [{ nodeId, label: GEMINI_MODEL_NAME, status: "failed", durationMs: Date.now() - startedAt, inputs: geminiInputs, error: message }],
       });
     } finally {
       if (runTokenRef.current === runToken) setRunning(false);
@@ -115,12 +153,12 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
       <div className="flex h-[59px] items-start justify-between border-b border-gray-100 px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="w-full min-w-0 cursor-grab select-none truncate text-sm font-medium leading-5 text-gray-900">
-            Gemini 3.1 Pro
+            {GEMINI_MODEL_NAME}
           </div>
         </div>
         <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
           <InfoTooltip
-            text="Generate text using Gemini 3.1 Pro (Google) via OpenRouter"
+            text={`Generate text using ${GEMINI_MODEL_NAME} (Google) via OpenRouter`}
             size={14}
             className=""
           />
@@ -141,7 +179,7 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
           >
             <MoreHorizontal size={16} strokeWidth={2} className="h-4 w-4" />
           </button>
-          <NodeMenu open={menuOpen} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />
+          <NodeMenu nodeId={nodeId} open={menuOpen} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />
         </div>
       </div>
 

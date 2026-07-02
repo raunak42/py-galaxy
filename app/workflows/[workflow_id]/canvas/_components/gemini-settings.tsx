@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { displayConnectedValue } from "../_lib/utils";
-import { useConnectedInputValue } from "../_lib/contexts";
+import { useConnectedInputValue, useNodeValueContext, useWorkflowEditContext } from "../_lib/contexts";
 import { AddToRequestButton, FieldHandle } from "./edges";
 import { HoverTooltip, InfoTooltip, ResetSettingButton } from "./tooltips";
 export function GeminiSettings({ nodeId }: { nodeId: string }) {
@@ -59,11 +59,32 @@ export function GeminiSettingSlider({
   step: string;
   tooltip: string;
 }) {
-  const [currentValue, setCurrentValue] = useState(value);
   const handleId = `setting-${label}`;
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [currentValue, setCurrentValue] = useState(() => {
+    const stored = values[nodeId]?.[handleId];
+    return typeof stored === "string" ? stored : value;
+  });
   const connected = useConnectedInputValue(nodeId, handleId);
   const isConnected = connected.isConnected;
   const displayValue = isConnected ? displayConnectedValue(connected.value) : currentValue;
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[handleId];
+    if (typeof stored === "string" && stored !== currentValue) {
+      setCurrentValue(stored);
+    }
+  }, [currentValue, handleId, nodeId, values]);
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, handleId, currentValue);
+  }, [currentValue, handleId, nodeId, setNodeHandleValue]);
+
+  const handleChange = useCallback((next: string) => {
+    recordSnapshot();
+    setCurrentValue(next);
+  }, [recordSnapshot]);
 
   return (
     <div className="relative overflow-visible">
@@ -77,7 +98,7 @@ export function GeminiSettingSlider({
             max={max}
             step={step}
             value={displayValue}
-            onChange={(event) => setCurrentValue(event.target.value)}
+            onChange={(event) => handleChange(event.target.value)}
             disabled={isConnected}
             title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
             className="nodrag h-2 min-w-[60px] flex-1 appearance-none rounded-lg bg-gray-200 accent-workflow-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -87,7 +108,7 @@ export function GeminiSettingSlider({
             min={min}
             max={max}
             value={displayValue}
-            onChange={(event) => setCurrentValue(event.target.value)}
+            onChange={(event) => handleChange(event.target.value)}
             disabled={isConnected}
             title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
             className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 disabled:opacity-60"
@@ -117,11 +138,32 @@ export function GeminiSettingNumber({
   step?: string;
   tooltip: string;
 }) {
-  const [currentValue, setCurrentValue] = useState(value);
   const handleId = `setting-${label}`;
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [currentValue, setCurrentValue] = useState(() => {
+    const stored = values[nodeId]?.[handleId];
+    return typeof stored === "string" ? stored : value;
+  });
   const connected = useConnectedInputValue(nodeId, handleId);
   const isConnected = connected.isConnected;
   const displayValue = isConnected ? displayConnectedValue(connected.value) : currentValue;
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[handleId];
+    if (typeof stored === "string" && stored !== currentValue) {
+      setCurrentValue(stored);
+    }
+  }, [currentValue, handleId, nodeId, values]);
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, handleId, currentValue);
+  }, [currentValue, handleId, nodeId, setNodeHandleValue]);
+
+  const handleChange = useCallback((next: string) => {
+    recordSnapshot();
+    setCurrentValue(next);
+  }, [recordSnapshot]);
 
   return (
     <div className="relative overflow-visible">
@@ -135,7 +177,7 @@ export function GeminiSettingNumber({
             max={max}
             step={step}
             value={displayValue}
-            onChange={(event) => setCurrentValue(event.target.value)}
+            onChange={(event) => handleChange(event.target.value)}
             disabled={isConnected}
             title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
             className="nodrag w-[56px] shrink-0 rounded-lg border border-gray-200 bg-[#F5F5F5] px-1 py-1 text-center text-xs leading-4 text-gray-900 outline-none focus:border-workflow-accent-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 disabled:opacity-60"
@@ -158,9 +200,36 @@ export function GeminiSettingBoolean({
   tooltip: string;
 }) {
   const handleId = `setting-${label}`;
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [enabled, setEnabled] = useState(() => {
+    const stored = values[nodeId]?.[handleId];
+    if (typeof stored === "boolean") return stored;
+    if (stored === "true") return true;
+    return false;
+  });
   const connected = useConnectedInputValue(nodeId, handleId);
   const isConnected = connected.isConnected;
-  const connectedBoolean = connected.value === true || displayConnectedValue(connected.value).toLowerCase() === "true";
+  const currentState = isConnected
+    ? connected.value === true || displayConnectedValue(connected.value).toLowerCase() === "true"
+    : enabled;
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[handleId];
+    const storedBool = typeof stored === "boolean" ? stored : stored === "true";
+    if (typeof stored !== "undefined" && storedBool !== enabled) {
+      setEnabled(storedBool);
+    }
+  }, [enabled, handleId, nodeId, values]);
+
+  useEffect(() => {
+    setNodeHandleValue(nodeId, handleId, enabled);
+  }, [enabled, handleId, nodeId, setNodeHandleValue]);
+
+  const toggle = useCallback(() => {
+    recordSnapshot();
+    setEnabled((prev) => !prev);
+  }, [recordSnapshot]);
 
   return (
     <div className="relative flex min-w-0 items-center gap-3 overflow-visible">
@@ -168,20 +237,21 @@ export function GeminiSettingBoolean({
       <GeminiSettingLabel label={label} tooltip={tooltip} />
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <div className="flex shrink-0 items-center gap-1.5">
-          <span className={`text-[10px] font-medium ${isConnected ? (connectedBoolean ? "text-gray-400" : "text-gray-600") : "text-gray-600"}`}>False</span>
+          <span className={`text-[10px] font-medium ${isConnected ? (currentState ? "text-gray-400" : "text-gray-600") : "text-gray-600"}`}>False</span>
           <button
             type="button"
             role="switch"
-            aria-checked={connectedBoolean}
-            data-state={connectedBoolean ? "checked" : "unchecked"}
+            aria-checked={currentState}
+            data-state={currentState ? "checked" : "unchecked"}
             value="on"
+            onClick={toggle}
             disabled={isConnected}
             title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
             className="peer nodrag inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-gray-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=unchecked]:bg-input data-[state=checked]:bg-workflow-accent-500"
           >
-            <span data-state={connectedBoolean ? "checked" : "unchecked"} className="pointer-events-none block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0" />
+            <span data-state={currentState ? "checked" : "unchecked"} className="pointer-events-none block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0" />
           </button>
-          <span className={`text-[10px] font-medium ${isConnected && connectedBoolean ? "text-gray-600" : "text-gray-400"}`}>True</span>
+          <span className={`text-[10px] font-medium ${isConnected && currentState ? "text-gray-600" : "text-gray-400"}`}>True</span>
         </div>
         <AddToRequestButton />
       </div>
@@ -201,8 +271,31 @@ export function GeminiSettingTextarea({
   tooltip: string;
 }) {
   const handleId = `setting-${label}`;
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [text, setText] = useState(() => {
+    const stored = values[nodeId]?.[handleId];
+    return typeof stored === "string" ? stored : "";
+  });
   const connected = useConnectedInputValue(nodeId, handleId);
   const isConnected = connected.isConnected;
+  const displayValue = isConnected ? displayConnectedValue(connected.value) : text;
+  const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[handleId];
+    if (typeof stored === "string" && stored !== text) {
+      setText(stored);
+    }
+  }, [handleId, nodeId, text, values]);
+
+  useEffect(() => {
+    if (text) setNodeHandleValue(nodeId, handleId, text);
+  }, [handleId, nodeId, setNodeHandleValue, text]);
+
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    recordSnapshot();
+    setText(e.target.value);
+  }, [recordSnapshot]);
 
   return (
     <div className="relative overflow-visible">
@@ -216,7 +309,8 @@ export function GeminiSettingTextarea({
       <textarea
         rows={2}
         placeholder={placeholder}
-        value={isConnected ? displayConnectedValue(connected.value) : undefined}
+        value={displayValue}
+        onChange={handleChange}
         disabled={isConnected}
         title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
         className="nodrag nopan nowheel w-full resize-y rounded-lg border border-gray-200 bg-[#F5F5F5] p-3 text-sm text-gray-900 outline-none focus:border-workflow-accent-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 disabled:opacity-60"
