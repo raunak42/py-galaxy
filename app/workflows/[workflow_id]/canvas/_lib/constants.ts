@@ -1,6 +1,7 @@
 import type { Edge } from "@xyflow/react";
 export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 2;
+export const HISTORY_PANEL_OFFSET = 375;
 
 // ---- Sidebar widths, lifted from the reference site's `.chat-sidebar-shell` ----
 export const SIDEBAR_COLLAPSED_WIDTH = 52; // measured

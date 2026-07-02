@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { useReactFlow } from "@xyflow/react";
 import { Search, StickyNote, Layers, Crop, ChevronRight, Plus, X, ArrowLeft } from "lucide-react";
+import { useWorkflowRunContext } from "../_lib/contexts";
+import { HISTORY_PANEL_OFFSET } from "../_lib/constants";
 import { HoverTooltip } from "./tooltips";
 export function CanvasZoomKeyboardHandler() {
   const { zoomIn, zoomOut } = useReactFlow();
@@ -76,9 +78,13 @@ export function CenterNodeToolbar({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const addButtonRef = useRef<HTMLButtonElement | null>(null);
+  const { historyOpen } = useWorkflowRunContext();
 
   return (
-    <div className="absolute bottom-[15px] left-1/2 z-[100] -translate-x-1/2">
+    <div
+      className="absolute bottom-[15px] left-1/2 z-[100] transition-transform duration-300 ease-out"
+      style={{ transform: `translateX(calc(-50% - ${historyOpen ? HISTORY_PANEL_OFFSET : 0}px))` }}
+    >
       <div className="flex h-[46px] items-center gap-1 overflow-visible rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm">
         <HoverTooltip text="Add Sticky Note" side="top" variant="dark" scaleWithZoom={false} triggerClassName="inline-flex">
           <button
@@ -337,7 +343,7 @@ export function TopLeftCanvasTitle() {
             <a
               className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-800 hover:bg-gray-50"
               aria-label="Back to Workflow"
-              href="/workflows"
+              href="/app/flow"
             >
               <ArrowLeft size={24} strokeWidth={2} className="lucide lucide-arrow-left h-4 w-4" />
             </a>

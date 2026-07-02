@@ -117,7 +117,7 @@ export function HoverTooltip({
   const visualClass =
     variant === "dark"
       ? "flex items-center gap-1.5 rounded-lg border-0 bg-gray-900 px-2.5 py-1.5 text-xs font-medium leading-4 text-white shadow-lg"
-      : "rounded-[18px] border border-[#e5e5e5] bg-[#f6f6f4] px-3 py-1.5 text-[11px] text-gray-700 shadow-lg";
+      : "rounded-[18px] border border-[#e5e5e5] bg-[#f6f6f4] px-3 py-1.5 text-xs font-normal leading-4 text-[#1b1b18] shadow-md";
   const accessibleText = shortcut ? `${text} ${shortcut}` : text;
 
   return (

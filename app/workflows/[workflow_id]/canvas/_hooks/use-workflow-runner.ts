@@ -18,6 +18,7 @@ type UseWorkflowRunnerParams = {
   setPendingNodeIds: Dispatch<SetStateAction<Set<string>>>;
   addHistoryEntry: (entry: Omit<HistoryRunEntry, "id" | "timestamp">) => void;
   setSelectionBoxNodeIds: Dispatch<SetStateAction<Set<string>>>;
+  markWorkflowDirty: () => void;
 };
 export function useWorkflowRunner({
   nodes,
@@ -32,6 +33,7 @@ export function useWorkflowRunner({
   setPendingNodeIds,
   addHistoryEntry,
   setSelectionBoxNodeIds,
+  markWorkflowDirty,
 }: UseWorkflowRunnerParams) {
   const runCancelTokenRef = useRef(0);
   const resolveActiveRunRef = useRef<(() => void) | null>(null);
@@ -43,7 +45,20 @@ export function useWorkflowRunner({
     type NodeRunResult = { nodeId: string; values: Record<string, unknown>; inputs: Record<string, unknown> };
     const runStartedAt = Date.now();
     const nodeDetails: HistoryNodeDetail[] = [];
-    const outputs: NodeOutputValues = { ...nodeValues };
+    const outputs: NodeOutputValues = Object.fromEntries(
+      Object.entries(nodeValues).map(([nodeId, values]) => [nodeId, { ...values }]),
+    );
+    const nodeById = new globalThis.Map(nodes.map((node) => [node.id, node]));
+    for (const node of nodes) {
+      if (node.type !== "request") continue;
+      const fields = Array.isArray(node.data?.fields) ? node.data.fields as Array<{ id?: string; label?: string; value?: unknown }> : [];
+      for (const field of fields) {
+        const fieldId = field.id ?? field.label;
+        if (!fieldId || field.value === undefined) continue;
+        if (outputs[node.id]?.[fieldId] !== undefined) continue;
+        outputs[node.id] = { ...(outputs[node.id] ?? {}), [fieldId]: field.value };
+      }
+    }
     const allExecutable = nodes.filter((node) => node.type === "geminiPreview" || node.type === "cropImage");
     const executable = targetIds ? allExecutable.filter((node) => targetIds.has(node.id)) : allExecutable;
     const executableIds = new Set(executable.map((node) => node.id));
@@ -55,7 +70,6 @@ export function useWorkflowRunner({
       return;
     }
     if (targetIds) {
-      const nodeById = new globalThis.Map(nodes.map((node) => [node.id, node]));
       const isExecutableNode = (node: Node | undefined) => node?.type === "geminiPreview" || node?.type === "cropImage";
       const externalUpstream = new Set<string>();
       const selectedBlockedBy = new globalThis.Map<string, string>();
@@ -113,14 +127,30 @@ export function useWorkflowRunner({
       const edge = edges.find((item) => item.target === targetNodeId && item.targetHandle === targetHandle);
       if (!edge) return "";
       const sourceHandle = edge.sourceHandle ?? "result";
-      return displayConnectedValue(outputs[edge.source]?.[sourceHandle]);
+      const outputValue = outputs[edge.source]?.[sourceHandle];
+      if (outputValue !== undefined) return displayConnectedValue(outputValue);
+      const sourceNode = nodeById.get(edge.source);
+      if (sourceNode?.type === "request") {
+        const fields = Array.isArray(sourceNode.data?.fields) ? sourceNode.data.fields as Array<{ id?: string; label?: string; value?: unknown }> : [];
+        const field = fields.find((item) => (item.id ?? item.label) === sourceHandle);
+        if (field?.value !== undefined) return displayConnectedValue(field.value);
+      }
+      return "";
     };
     const readConnectedValues = (targetNodeId: string, targetHandle: string) => {
       return edges
         .filter((item) => item.target === targetNodeId && item.targetHandle === targetHandle)
         .flatMap((edge) => {
           const sourceHandle = edge.sourceHandle ?? "result";
-          return valueToStringArray(outputs[edge.source]?.[sourceHandle]);
+          const outputValue = outputs[edge.source]?.[sourceHandle];
+          if (outputValue !== undefined) return valueToStringArray(outputValue);
+          const sourceNode = nodeById.get(edge.source);
+          if (sourceNode?.type === "request") {
+            const fields = Array.isArray(sourceNode.data?.fields) ? sourceNode.data.fields as Array<{ id?: string; label?: string; value?: unknown }> : [];
+            const field = fields.find((item) => (item.id ?? item.label) === sourceHandle);
+            if (field?.value !== undefined) return valueToStringArray(field.value);
+          }
+          return [];
         })
         .filter(Boolean);
     };
@@ -272,6 +302,7 @@ export function useWorkflowRunner({
         ...current,
         [result.nodeId]: { ...(current[result.nodeId] ?? {}), ...result.values },
       }));
+      markWorkflowDirty();
     };
     setSelectionBoxNodeIds(new Set());
     setNodes((currentNodes) => currentNodes.some((node) => node.selected)
@@ -359,7 +390,7 @@ export function useWorkflowRunner({
         setWorkflowRunning(false);
       }
     }
-  }, [addHistoryEntry, edges, nodeValues, nodes, setNodeValues, setNodes, setPendingNodeIds, setRunningNodeIds, setSelectionBoxNodeIds, setWorkflowRunning, workflowRunning]);
+  }, [addHistoryEntry, edges, markWorkflowDirty, nodeValues, nodes, setNodeValues, setNodes, setPendingNodeIds, setRunningNodeIds, setSelectionBoxNodeIds, setWorkflowRunning, workflowRunning]);
   const cancelWorkflow = useCallback(() => {
     runCancelTokenRef.current += 1;
     resolveActiveRunRef.current?.();
