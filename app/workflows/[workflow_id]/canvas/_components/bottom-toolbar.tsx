@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useCallback, useRef, useState } from "react";
-import { useReactFlow, useViewport, type Node, type Edge } from "@xyflow/react";
-import { FileOutput, ChevronLeft, ChevronRight, Undo2, Redo2, Command, ZoomOut, ZoomIn, Maximize2, LayoutGrid, Move, Square, CloudUpload } from "lucide-react";
-import { toast } from "@/lib/toast";
+import React, { useCallback, useState } from "react";
+import { useReactFlow, useViewport } from "@xyflow/react";
+import { ChevronLeft, ChevronRight, Undo2, Redo2, ZoomOut, ZoomIn, Maximize2, LayoutGrid, Move, Square } from "lucide-react";
 import { MIN_ZOOM, MAX_ZOOM } from "../_lib/constants";
 import { useWorkflowEditContext } from "../_lib/contexts";
 import { HoverTooltip } from "./tooltips";
@@ -16,51 +15,90 @@ export function BottomToolbar({
   interactionMode: CanvasInteractionMode;
   setInteractionMode: (mode: CanvasInteractionMode) => void;
 }) {
-  const { zoomIn, zoomOut, fitView, getNodes, getEdges, setNodes, setEdges } = useReactFlow();
+  const { zoomIn, zoomOut, fitView, getNodes, getEdges, setNodes } = useReactFlow();
   const { zoom } = useViewport();
   const [collapsed, setCollapsed] = useState(false);
-  const importInputRef = useRef<HTMLInputElement | null>(null);
   const { undo, redo, canUndo, canRedo, recordSnapshot } = useWorkflowEditContext();
 
-  const noop = () => {};
+  const animateNodes = useCallback((updatedNodes: ReturnType<typeof getNodes>) => {
+    const flow = document.querySelector(".react-flow");
+    if (flow) flow.classList.add("auto-arranging");
+    setNodes(updatedNodes);
+    requestAnimationFrame(() => fitView({ duration: 300, padding: 0.15 }));
+    setTimeout(() => {
+      if (flow) flow.classList.remove("auto-arranging");
+    }, 350);
+  }, [fitView, setNodes]);
 
-  const exportWorkflowJson = useCallback(() => {
-    const payload = {
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      nodes: getNodes(),
-      edges: getEdges(),
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `py-workflow-${Date.now()}.json`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    toast({ description: "Workflow exported as JSON" });
-  }, [getEdges, getNodes]);
-
-  const importWorkflowJson = useCallback(async (file: File) => {
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text) as { nodes?: Node[]; edges?: Edge[] };
-      if (!Array.isArray(parsed.nodes) || !Array.isArray(parsed.edges)) {
-        throw new Error("Invalid workflow JSON: expected nodes and edges arrays");
-      }
-      recordSnapshot();
-      setNodes(parsed.nodes);
-      setEdges(parsed.edges);
-      requestAnimationFrame(() => fitView({ padding: 0.15 }));
-      toast({ description: "Workflow imported" });
-    } catch (error) {
-      toast({ description: error instanceof Error ? error.message : "Import failed" });
-    } finally {
-      if (importInputRef.current) importInputRef.current.value = "";
+  const autoArrange = useCallback(() => {
+    const nodes = getNodes();
+    const edges = getEdges();
+    if (nodes.length === 0) return;
+    recordSnapshot();
+    const nodeWidth = 380;
+    const horizontalGap = 100;
+    const verticalGap = 80;
+    const incomingEdges = new Map<string, string[]>();
+    const outgoingEdges = new Map<string, string[]>();
+    for (const node of nodes) {
+      incomingEdges.set(node.id, []);
+      outgoingEdges.set(node.id, []);
     }
-  }, [fitView, recordSnapshot, setEdges, setNodes]);
+    for (const edge of edges) {
+      const sourceId = edge.source;
+      const targetId = edge.target;
+      if (incomingEdges.has(targetId) && !incomingEdges.get(targetId)!.includes(sourceId)) {
+        incomingEdges.get(targetId)!.push(sourceId);
+      }
+      if (outgoingEdges.has(sourceId) && !outgoingEdges.get(sourceId)!.includes(targetId)) {
+        outgoingEdges.get(sourceId)!.push(targetId);
+      }
+    }
+    const levels = new Map<string, number>();
+    const queue: string[] = [];
+    for (const node of nodes) {
+      if (incomingEdges.get(node.id)!.length === 0) {
+        levels.set(node.id, 0);
+        queue.push(node.id);
+      }
+    }
+    for (let i = 0; i < queue.length; i++) {
+      const current = queue[i];
+      const currentLevel = levels.get(current) ?? 0;
+      for (const next of outgoingEdges.get(current) ?? []) {
+        const existingLevel = levels.get(next);
+        const newLevel = currentLevel + 1;
+        if (existingLevel === undefined || newLevel > existingLevel) {
+          levels.set(next, newLevel);
+        }
+        if (!queue.includes(next)) queue.push(next);
+      }
+    }
+    for (const node of nodes) {
+      if (!levels.has(node.id)) levels.set(node.id, 0);
+    }
+    const maxLevel = Math.max(...levels.values(), 0);
+    const nodesByLevel: string[][] = Array.from({ length: maxLevel + 1 }, () => []);
+    for (const node of nodes) {
+      const level = levels.get(node.id) ?? 0;
+      nodesByLevel[level].push(node.id);
+    }
+    const startX = 50;
+    const startY = 50;
+    const updatedNodes = nodes.map((node) => {
+      const level = levels.get(node.id) ?? 0;
+      const nodesInLevel = nodesByLevel[level];
+      const levelHeight = nodesInLevel.length * (nodeWidth * 0.4 + verticalGap) - verticalGap;
+      const centerOffset = levelHeight / 2;
+      const posInLevel = nodesInLevel.indexOf(node.id);
+      const y = startY + centerOffset - posInLevel * (nodeWidth * 0.4 + verticalGap);
+      return {
+        ...node,
+        position: { x: startX + level * (nodeWidth + horizontalGap), y },
+      };
+    });
+    animateNodes(updatedNodes);
+  }, [animateNodes, getEdges, getNodes, recordSnapshot]);
   const toolbarShellClass =
     "nodrag nopan absolute bottom-[15px] left-[15px] z-10 flex items-center gap-1 rounded-xl border border-gray-200 bg-white/95 px-2 py-1.5 shadow-[0_0_0_0_rgba(0,0,0,0),0_0_0_0_rgba(0,0,0,0),0_1px_2px_0_rgba(0,0,0,0.05)] backdrop-blur-sm";
 
@@ -74,25 +112,11 @@ export function BottomToolbar({
 
   return (
     <>
-      <input
-        ref={importInputRef}
-        type="file"
-        accept="application/json,.json"
-        className="hidden"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void importWorkflowJson(file);
-        }}
-      />
       <div className={toolbarShellClass}>
       <ToolbarButton icon={ChevronLeft} label="Collapse controls" onClick={() => setCollapsed(true)} />
       <Divider />
       <ToolbarButton icon={Undo2} label="Undo" onClick={undo} disabled={!canUndo} />
       <ToolbarButton icon={Redo2} label="Redo" onClick={redo} disabled={!canRedo} />
-      <ToolbarButton icon={Command} label="Keyboard shortcuts" onClick={noop} />
-      <Divider />
-      <ToolbarButton icon={FileOutput} label="Export workflow JSON" onClick={exportWorkflowJson} />
-      <ToolbarButton icon={CloudUpload} label="Import workflow JSON" onClick={() => importInputRef.current?.click()} />
       <Divider />
       <ToolbarButton
         icon={ZoomOut}
@@ -110,8 +134,8 @@ export function BottomToolbar({
         disabled={zoom >= MAX_ZOOM - 0.001}
       />
       <Divider />
-      <ToolbarButton icon={Maximize2} label="Fit view" onClick={() => fitView()} />
-      <ToolbarButton icon={LayoutGrid} label="Toggle minimap" onClick={noop} />
+      <ToolbarButton icon={Maximize2} label="Fit view" onClick={() => fitView({ duration: 300 })} />
+      <ToolbarButton icon={LayoutGrid} label="Auto arrange" onClick={autoArrange} />
       <Divider />
       <PanSelectToggle
         interactionMode={interactionMode}
