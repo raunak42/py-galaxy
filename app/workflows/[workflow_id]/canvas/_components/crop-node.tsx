@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
-import { RotateCcw, Coins, File } from "lucide-react";
+import { RotateCcw, Coins, File, Loader2 } from "lucide-react";
 import { IconUpload } from "@tabler/icons-react";
 import { toast } from "@/lib/toast";
 import { displayConnectedValue, isImageUrl } from "../_lib/utils";
@@ -229,7 +229,11 @@ export function CropImageUpload({ nodeId, id, label, required }: { nodeId: strin
               title={isConnected ? "Connected input — disconnect to enter manually" : "Upload image"}
               className={`nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700 disabled:pointer-events-none disabled:bg-gray-100 disabled:text-gray-400 ${connectedManualInputClass(isConnected)}`}
             >
-              <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+              {uploading ? (
+                <Loader2 size={14} strokeWidth={2} className="h-3.5 w-3.5 animate-spin text-gray-600" />
+              ) : (
+                <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+              )}
               <span className="max-w-[180px] truncate">{uploading ? "Uploading to Transloadit…" : displayValue || "Upload Image"}</span>
             </button>
           </HoverTooltip>

@@ -179,13 +179,13 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
               />
             </div>
             <div className="mb-1.5 text-xs font-normal leading-4 text-gray-500">Response</div>
-            <div className="min-h-[84px] rounded-lg border border-gray-200 bg-white p-3">
+            <div className="min-h-[84px] max-w-full overflow-hidden rounded-lg border border-gray-200 bg-white p-3">
               {isNodeRunning ? (
                 <div className="py-6 text-center text-xs leading-4 text-gray-400">Running Gemini…</div>
               ) : runError ? (
-                <div className="whitespace-pre-wrap text-xs leading-5 text-red-500">{runError}</div>
+                <div className="max-w-full whitespace-pre-wrap break-words text-xs leading-5 text-red-500 [overflow-wrap:anywhere]">{runError}</div>
               ) : displayedResponse ? (
-                <div className="whitespace-pre-wrap text-sm leading-5 text-gray-900">{displayedResponse}</div>
+                <div className="max-w-full whitespace-pre-wrap break-words text-sm leading-5 text-gray-900 [overflow-wrap:anywhere]">{displayedResponse}</div>
               ) : (
                 <div className="py-6 text-center text-xs leading-4 text-gray-400">No output yet</div>
               )}

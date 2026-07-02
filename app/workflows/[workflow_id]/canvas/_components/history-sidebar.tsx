@@ -13,8 +13,6 @@ export function WorkflowHistorySidebar() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  if (!historyOpen) return null;
-
   const selectedRun = historyEntries.find((entry) => entry.id === expandedId) ?? null;
   const selectedNode = selectedRun?.nodeDetails.find((detail) => detail.nodeId === selectedNodeId) ?? selectedRun?.nodeDetails[0] ?? null;
   const requestDetail = selectedRun?.nodeDetails.find((detail) => detail.nodeId === "request-inputs") ?? null;
@@ -39,7 +37,11 @@ export function WorkflowHistorySidebar() {
   };
 
   return (
-    <div className="absolute right-0 top-0 z-[80] h-full min-h-0 w-[360px] border-l border-gray-200 bg-gray-50">
+    <div
+      className={`absolute right-0 top-0 z-[80] h-full min-h-0 w-[360px] border-l border-gray-200 bg-gray-50 shadow-2xl transition-transform duration-300 ease-out ${historyOpen ? "translate-x-0" : "translate-x-full"}`}
+      style={{ pointerEvents: historyOpen ? "auto" : "none" }}
+      aria-hidden={!historyOpen}
+    >
       <div className="flex h-full min-h-0 flex-col">
         <div className="sticky top-0 z-10 border-b border-gray-200 bg-white p-4">
           <div className="flex items-center justify-between gap-2">

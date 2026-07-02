@@ -5,7 +5,7 @@ import { Handle, Position, EdgeLabelRenderer, useReactFlow, type EdgeProps } fro
 import { getBezierPath } from "@xyflow/react";
 import type { ConnectionLineComponentProps } from "@xyflow/react";
 import { HANDLE_COLORS, handleTypeFromId } from "../_lib/constants";
-import { SelectionBoxNodeContext } from "../_lib/contexts";
+import { SelectionBoxNodeContext, useWorkflowEditContext } from "../_lib/contexts";
 export function FieldHandle({
   id,
   color = "#f59e0b",
@@ -96,6 +96,7 @@ export function RemovableEdge({
 }: EdgeProps) {
   const [hovered, setHovered] = useState(false);
   const { setEdges } = useReactFlow();
+  const { recordSnapshot } = useWorkflowEditContext();
   const selectionBoxNodeIds = useContext(SelectionBoxNodeContext);
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -159,6 +160,7 @@ export function RemovableEdge({
               title="Delete connection"
               onClick={(event) => {
                 event.stopPropagation();
+                recordSnapshot();
                 setEdges((edges) => edges.filter((edge) => edge.id !== id));
               }}
               className="flex h-5 w-5 items-center justify-center rounded-full border border-red-400 bg-red-500 text-xs font-bold text-white shadow-lg transition-colors hover:bg-red-600"

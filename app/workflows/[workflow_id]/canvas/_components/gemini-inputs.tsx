@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Maximize2, X } from "lucide-react";
+import { Loader2, Maximize2, X } from "lucide-react";
 import { IconUpload } from "@tabler/icons-react";
 import { toast } from "@/lib/toast";
 import { displayConnectedValue, valueToStringArray } from "../_lib/utils";
@@ -88,6 +88,7 @@ export function GeminiUpload({
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; url: string; file: File }[]>([]);
+  const [uploading, setUploading] = useState(false);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const connected = useConnectedInputValue(nodeId, id);
   const connectedValues = useConnectedInputValues(nodeId, id);
@@ -99,11 +100,14 @@ export function GeminiUpload({
   }, [id, nodeId, setNodeHandleValue, uploadedFiles]);
 
   const handleUpload = useCallback(async (file: File) => {
+    setUploading(true);
     try {
       const url = id === "image" ? await uploadImageWithTransloadit(file) : await readFileAsDataUrl(file);
       setUploadedFiles((prev) => [...prev, { name: file.name, url, file }]);
     } catch (error) {
       toast({ description: error instanceof Error ? error.message : "Upload failed" });
+    } finally {
+      setUploading(false);
     }
   }, [id]);
 
@@ -153,16 +157,20 @@ export function GeminiUpload({
               tabIndex={-1}
               aria-label={`Upload ${buttonText.replace(/^Upload\s+/i, "").toLowerCase()}`}
               onClick={() => setUploadPopoverOpen((open) => !open)}
-              disabled={isConnected}
+              disabled={isConnected || uploading}
               title={isConnected ? "Connected input — disconnect to enter manually" : undefined}
               data-state={uploadPopoverOpen ? "open" : "closed"}
               className={`nodrag flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2.5 text-xs font-normal leading-4 text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-700 disabled:pointer-events-none disabled:bg-gray-100 disabled:text-gray-400 ${connectedManualInputClass(isConnected)}`}
             >
-              <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
-              <span className="max-w-[180px] truncate capitalize">{isConnected ? `${connectedValues.values.flatMap(valueToStringArray).length || 1} connected ${id === "image" ? "image" : "input"}${(connectedValues.values.flatMap(valueToStringArray).length || 1) === 1 ? "" : "s"}` : buttonText}</span>
+              {uploading ? (
+                <Loader2 size={14} strokeWidth={2} className="h-3.5 w-3.5 animate-spin text-gray-600" />
+              ) : (
+                <IconUpload size={14} stroke={2} className="h-3.5 w-3.5" />
+              )}
+              <span className="max-w-[180px] truncate capitalize">{uploading ? "Uploading to Transloadit…" : isConnected ? `${connectedValues.values.flatMap(valueToStringArray).length || 1} connected ${id === "image" ? "image" : "input"}${(connectedValues.values.flatMap(valueToStringArray).length || 1) === 1 ? "" : "s"}` : buttonText}</span>
             </button>
           </HoverTooltip>
-          {!isConnected && <UploadPopover
+          {!isConnected && !uploading && <UploadPopover
             open={uploadPopoverOpen}
             anchorRef={uploadButtonRef}
             onClose={() => setUploadPopoverOpen(false)}
