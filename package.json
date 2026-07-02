@@ -5,13 +5,18 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postinstall": "prisma generate",
     "start": "next start",
     "lint": "eslint",
     "trigger:dev": "trigger dev",
-    "trigger:deploy": "trigger deploy"
+    "trigger:deploy": "trigger deploy",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.5.12",
     "@google/generative-ai": "^0.24.1",
+    "@prisma/client": "^6.19.3",
     "@radix-ui/react-toast": "^1.2.18",
     "@tabler/icons-react": "^3.44.0",
     "@trigger.dev/sdk": "^4.4.6",
@@ -29,6 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
+    "prisma": "^6.19.3",
     "tailwindcss": "^4",
     "trigger.dev": "^4.4.6",
     "typescript": "^5"
