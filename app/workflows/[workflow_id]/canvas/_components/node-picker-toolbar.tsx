@@ -367,11 +367,16 @@ export function NodePicker({
 export function TopLeftCanvasTitle({
   sidebarOpen,
   setSidebarOpen,
+  title,
+  onTitleChange,
+  onTitleSave,
 }: {
   sidebarOpen: boolean;
   setSidebarOpen: (v: boolean) => void;
+  title: string;
+  onTitleChange: (title: string) => void;
+  onTitleSave: (title: string) => void;
 }) {
-  const [title, setTitle] = useState("Trial Task Workflow");
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -408,7 +413,13 @@ export function TopLeftCanvasTitle({
           <div className="relative">
             <input
               value={title}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => onTitleChange(event.target.value)}
+              onBlur={(event) => onTitleSave(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.currentTarget.blur();
+                }
+              }}
               placeholder="Untitled"
               maxLength={120}
               className="h-8 w-[120px] bg-transparent text-[14px] font-normal text-gray-900 outline-none placeholder:text-gray-400 sm:w-[160px]"

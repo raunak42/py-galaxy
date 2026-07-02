@@ -75,6 +75,7 @@ export default function WorkflowCanvasPage() {
   const workflowId = params.workflow_id;
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [workflowLoaded, setWorkflowLoaded] = useState(false);
+  const [workflowName, setWorkflowName] = useState("Trial Task Workflow");
   const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus | null>(null);
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState(initialNodes);
@@ -92,6 +93,7 @@ export default function WorkflowCanvasPage() {
   const templateWorkflowRef = useRef(false);
   const autoSaveSequenceRef = useRef(0);
   const lastPersistedWorkflowSignatureRef = useRef<string | null>(null);
+  const lastPersistedWorkflowNameRef = useRef("Trial Task Workflow");
   const latestNodesRef = useRef(nodes);
   const latestEdgesRef = useRef(edges);
   const latestNodeValuesRef = useRef(nodeValues);
@@ -189,12 +191,14 @@ export default function WorkflowCanvasPage() {
     async function loadWorkflow() {
       try {
         const workflowResponse = await fetch(`/api/workflows/${workflowId}`, { cache: "no-store" });
-        const workflowJson = await workflowResponse.json() as { workflow?: { nodes?: Node[]; edges?: Edge[]; nodeValues?: NodeOutputValues; undoStack?: Array<{ nodes: Node[]; edges: Edge[] }>; redoStack?: Array<{ nodes: Node[]; edges: Edge[] }> }; error?: string };
+        const workflowJson = await workflowResponse.json() as { workflow?: { name?: string; nodes?: Node[]; edges?: Edge[]; nodeValues?: NodeOutputValues; undoStack?: Array<{ nodes: Node[]; edges: Edge[] }>; redoStack?: Array<{ nodes: Node[]; edges: Edge[] }> }; error?: string };
         if (!workflowResponse.ok || !workflowJson.workflow) {
           templateWorkflowRef.current = true;
           const loadedNodes = sampleWorkflowNodes;
           const loadedEdges = sampleWorkflowEdges;
           const loadedNodeValues = {};
+          setWorkflowName("Trial Task Workflow");
+          lastPersistedWorkflowNameRef.current = "Trial Task Workflow";
           setNodes(loadedNodes);
           setEdges(loadedEdges);
           setNodeValues(loadedNodeValues);
@@ -215,9 +219,12 @@ export default function WorkflowCanvasPage() {
         const historyJson = await historyResponse.json() as { runs?: HistoryRunEntry[]; error?: string };
         if (!historyResponse.ok) throw new Error(historyJson.error ?? "Failed to load history");
         if (canceled) return;
+        const loadedWorkflowName = workflowJson.workflow.name ?? "Untitled Workflow";
         const loadedNodes = Array.isArray(workflowJson.workflow.nodes) ? workflowJson.workflow.nodes : initialNodes;
         const loadedEdges = Array.isArray(workflowJson.workflow.edges) ? workflowJson.workflow.edges : initialEdges;
         const loadedNodeValues = workflowJson.workflow.nodeValues ?? {};
+        setWorkflowName(loadedWorkflowName);
+        lastPersistedWorkflowNameRef.current = loadedWorkflowName;
         setNodes(loadedNodes);
         setEdges(loadedEdges);
         setNodeValues(loadedNodeValues);
@@ -478,6 +485,46 @@ export default function WorkflowCanvasPage() {
     ]);
   }, [recordSnapshot, setNodes]);
 
+  const saveWorkflowName = useCallback(async (rawName: string) => {
+    const nextName = rawName.trim() || "Untitled Workflow";
+    setWorkflowName(nextName);
+    if (nextName === lastPersistedWorkflowNameRef.current) return;
+
+    setAutoSaveStatus("saving");
+    try {
+      if (templateWorkflowRef.current) {
+        const payload = buildPersistedWorkflowPayload();
+        const response = await fetch("/api/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, name: nextName }),
+        });
+        const result = await response.json() as { workflow?: { id: string; name?: string }; error?: string };
+        if (!response.ok || !result.workflow?.id) throw new Error(result.error ?? "Failed to save workflow title");
+        lastPersistedWorkflowNameRef.current = result.workflow.name ?? nextName;
+        setAutoSaveStatus("saved");
+        window.location.href = `/app/flow/${result.workflow.id}/canvas`;
+        return;
+      }
+
+      const response = await fetch(`/api/workflows/${workflowId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nextName }),
+      });
+      const result = await response.json() as { workflow?: { name: string }; error?: string };
+      if (!response.ok || !result.workflow) throw new Error(result.error ?? "Failed to save workflow title");
+      lastPersistedWorkflowNameRef.current = result.workflow.name;
+      setWorkflowName(result.workflow.name);
+      setAutoSaveStatus("saved");
+      window.setTimeout(() => setAutoSaveStatus(null), 1500);
+    } catch (error) {
+      toast({ description: error instanceof Error ? error.message : "Failed to save workflow title" });
+      setWorkflowName(lastPersistedWorkflowNameRef.current);
+      setAutoSaveStatus(null);
+    }
+  }, [buildPersistedWorkflowPayload, workflowId]);
+
   const { runWorkflow, runSelectedNodes, cancelWorkflow, selectedExecutableCount } = useWorkflowRunner({
     nodes,
     edges,
@@ -493,6 +540,14 @@ export default function WorkflowCanvasPage() {
     setSelectionBoxNodeIds,
     markWorkflowDirty,
   });
+
+  useEffect(() => {
+    if (!workflowLoaded) return;
+    const timeout = window.setTimeout(() => {
+      void saveWorkflowName(workflowName);
+    }, 900);
+    return () => window.clearTimeout(timeout);
+  }, [saveWorkflowName, workflowLoaded, workflowName]);
 
   const nodeValueCtx = useMemo(() => ({ values: nodeValues, setNodeHandleValue }), [nodeValues, setNodeHandleValue]);
   const workflowRunCtx = useMemo(() => ({
@@ -573,7 +628,13 @@ export default function WorkflowCanvasPage() {
             color="#cacaca"
           />
           <CanvasZoomKeyboardHandler />
-          <TopLeftCanvasTitle sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
+          <TopLeftCanvasTitle
+            sidebarOpen={sidebarOpen}
+            setSidebarOpen={setSidebarOpen}
+            title={workflowName}
+            onTitleChange={setWorkflowName}
+            onTitleSave={(title) => { void saveWorkflowName(title); }}
+          />
           <AutoSaveIndicator status={autoSaveStatus} />
           <TopRightCanvasControls />
           <BottomRightCanvasControls />
