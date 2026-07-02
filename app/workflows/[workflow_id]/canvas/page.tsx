@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -28,11 +29,48 @@ import { Sidebar } from "./_components/sidebar";
 import { CanvasZoomKeyboardHandler, CenterNodeToolbar, TopLeftCanvasTitle } from "./_components/canvas-toolbar";
 import { BottomToolbar, type CanvasInteractionMode } from "./_components/canvas-toolbar";
 import { WorkflowHistorySidebar } from "./_components/history-sidebar";
-import { SelectionRunOverlay, TopRightCanvasControls, BottomRightCanvasControls } from "./_components/canvas-controls";
+import { AutoSaveIndicator, SelectionRunOverlay, TopRightCanvasControls, BottomRightCanvasControls, type AutoSaveStatus } from "./_components/canvas-controls";
 import { useWorkflowRunner } from "./_hooks/use-workflow-runner";
 
+function sanitizeNodeForPersistence(node: Node) {
+  const clean = { ...node } as Record<string, unknown>;
+  delete clean.selected;
+  delete clean.dragging;
+  delete clean.measured;
+  delete clean.resizing;
+  delete clean.positionAbsolute;
+  delete clean.internals;
+  return clean;
+}
+
+function sanitizeEdgeForPersistence(edge: Edge) {
+  const clean = { ...edge } as Record<string, unknown>;
+  delete clean.selected;
+  return clean;
+}
+
+function buildWorkflowPersistencePayload(
+  currentNodes: Node[],
+  currentEdges: Edge[],
+  currentNodeValues: NodeOutputValues,
+  undoStack: Array<{ nodes: Node[]; edges: Edge[] }>,
+  redoStack: Array<{ nodes: Node[]; edges: Edge[] }>,
+) {
+  return {
+    nodes: currentNodes.map(sanitizeNodeForPersistence),
+    edges: currentEdges.map(sanitizeEdgeForPersistence),
+    nodeValues: currentNodeValues,
+    undoStack,
+    redoStack,
+  };
+}
+
 export default function WorkflowCanvasPage() {
+  const params = useParams<{ workflow_id: string }>();
+  const workflowId = params.workflow_id;
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [workflowLoaded, setWorkflowLoaded] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus | null>(null);
 
   const [nodes, setNodes, onNodesChangeBase] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState(initialEdges);
@@ -42,12 +80,35 @@ export default function WorkflowCanvasPage() {
   const [workflowRunning, setWorkflowRunning] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyEntries, setHistoryEntries] = useState<HistoryRunEntry[]>([]);
-  const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>("select");
+  const [interactionMode, setInteractionMode] = useState<CanvasInteractionMode>("pan");
   const [selectionBoxNodeIds, setSelectionBoxNodeIds] = useState<Set<string>>(() => new Set());
   const selectionBoxInProgressRef = useRef(false);
+  const autoSaveInitializedRef = useRef(false);
+  const autoSaveSequenceRef = useRef(0);
+  const lastPersistedWorkflowSignatureRef = useRef<string | null>(null);
+  const latestNodesRef = useRef(nodes);
+  const latestEdgesRef = useRef(edges);
+  const latestNodeValuesRef = useRef(nodeValues);
+  const [workflowDirtyRevision, setWorkflowDirtyRevision] = useState(0);
   const undoStackRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
   const redoStackRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
   const [editHistoryCounts, setEditHistoryCounts] = useState({ undo: 0, redo: 0 });
+
+  useEffect(() => {
+    latestNodesRef.current = nodes;
+  }, [nodes]);
+
+  useEffect(() => {
+    latestEdgesRef.current = edges;
+  }, [edges]);
+
+  useEffect(() => {
+    latestNodeValuesRef.current = nodeValues;
+  }, [nodeValues]);
+
+  const markWorkflowDirty = useCallback(() => {
+    setWorkflowDirtyRevision((revision) => revision + 1);
+  }, []);
 
   const refreshEditHistoryCounts = useCallback(() => {
     setEditHistoryCounts({ undo: undoStackRef.current.length, redo: redoStackRef.current.length });
@@ -57,8 +118,9 @@ export default function WorkflowCanvasPage() {
     undoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
     if (undoStackRef.current.length > 80) undoStackRef.current.shift();
     redoStackRef.current = [];
+    markWorkflowDirty();
     refreshEditHistoryCounts();
-  }, [edges, nodes, refreshEditHistoryCounts]);
+  }, [edges, markWorkflowDirty, nodes, refreshEditHistoryCounts]);
 
   const undo = useCallback(() => {
     const previous = undoStackRef.current.pop();
@@ -66,8 +128,9 @@ export default function WorkflowCanvasPage() {
     redoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
     setNodes(previous.nodes);
     setEdges(previous.edges);
+    markWorkflowDirty();
     refreshEditHistoryCounts();
-  }, [edges, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
+  }, [edges, markWorkflowDirty, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
 
   const redo = useCallback(() => {
     const next = redoStackRef.current.pop();
@@ -75,22 +138,133 @@ export default function WorkflowCanvasPage() {
     undoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
     setNodes(next.nodes);
     setEdges(next.edges);
+    markWorkflowDirty();
     refreshEditHistoryCounts();
-  }, [edges, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
+  }, [edges, markWorkflowDirty, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
 
   const canUndo = editHistoryCounts.undo > 0;
   const canRedo = editHistoryCounts.redo > 0;
 
+  const buildPersistedWorkflowPayload = useCallback(() => buildWorkflowPersistencePayload(
+    latestNodesRef.current,
+    latestEdgesRef.current,
+    latestNodeValuesRef.current,
+    undoStackRef.current,
+    redoStackRef.current,
+  ), []);
+
   const addHistoryEntry = useCallback((entry: Omit<HistoryRunEntry, "id" | "timestamp">) => {
-    setHistoryEntries((current) => [
-      { ...entry, id: `run-${Date.now()}-${Math.random().toString(36).slice(2)}`, timestamp: Date.now() },
-      ...current,
-    ]);
-  }, []);
+    const optimisticEntry = { ...entry, id: `run-${Date.now()}-${Math.random().toString(36).slice(2)}`, timestamp: Date.now() };
+    setHistoryEntries((current) => [optimisticEntry, ...current]);
+
+    void fetch(`/api/workflows/${workflowId}/history`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(optimisticEntry),
+    })
+      .then(async (response) => {
+        const json = await response.json() as { run?: HistoryRunEntry; error?: string };
+        if (!response.ok || !json.run) throw new Error(json.error ?? "Failed to save run history");
+        setHistoryEntries((current) => current.map((item) => item.id === optimisticEntry.id ? json.run! : item));
+      })
+      .catch((error) => {
+        toast({ description: error instanceof Error ? error.message : "Failed to save run history" });
+      });
+  }, [workflowId]);
+
+  useEffect(() => {
+    let canceled = false;
+
+    async function loadWorkflow() {
+      try {
+        const workflowResponse = await fetch(`/api/workflows/${workflowId}`, { cache: "no-store" });
+        const workflowJson = await workflowResponse.json() as { workflow?: { nodes?: Node[]; edges?: Edge[]; nodeValues?: NodeOutputValues; undoStack?: Array<{ nodes: Node[]; edges: Edge[] }>; redoStack?: Array<{ nodes: Node[]; edges: Edge[] }> }; error?: string };
+        if (!workflowResponse.ok || !workflowJson.workflow) throw new Error(workflowJson.error ?? "Failed to load workflow");
+        const historyResponse = await fetch(`/api/workflows/${workflowId}/history`, { cache: "no-store" });
+        const historyJson = await historyResponse.json() as { runs?: HistoryRunEntry[]; error?: string };
+        if (!historyResponse.ok) throw new Error(historyJson.error ?? "Failed to load history");
+        if (canceled) return;
+        const loadedNodes = Array.isArray(workflowJson.workflow.nodes) ? workflowJson.workflow.nodes : initialNodes;
+        const loadedEdges = Array.isArray(workflowJson.workflow.edges) ? workflowJson.workflow.edges : initialEdges;
+        const loadedNodeValues = workflowJson.workflow.nodeValues ?? {};
+        setNodes(loadedNodes);
+        setEdges(loadedEdges);
+        setNodeValues(loadedNodeValues);
+        undoStackRef.current = Array.isArray(workflowJson.workflow.undoStack) ? workflowJson.workflow.undoStack : [];
+        redoStackRef.current = Array.isArray(workflowJson.workflow.redoStack) ? workflowJson.workflow.redoStack : [];
+        lastPersistedWorkflowSignatureRef.current = JSON.stringify(buildWorkflowPersistencePayload(
+          loadedNodes,
+          loadedEdges,
+          loadedNodeValues,
+          undoStackRef.current,
+          redoStackRef.current,
+        ));
+        refreshEditHistoryCounts();
+        setHistoryEntries(historyJson.runs ?? []);
+        setWorkflowLoaded(true);
+      } catch (error) {
+        if (!canceled) {
+          toast({ description: error instanceof Error ? error.message : "Failed to load workflow" });
+          setWorkflowLoaded(true);
+        }
+      }
+    }
+
+    void loadWorkflow();
+    return () => {
+      canceled = true;
+    };
+  }, [refreshEditHistoryCounts, setEdges, setNodes, workflowId]);
+
+  useEffect(() => {
+    if (!workflowLoaded) return;
+    if (!autoSaveInitializedRef.current) {
+      autoSaveInitializedRef.current = true;
+      return;
+    }
+
+    const payload = buildPersistedWorkflowPayload();
+    const signature = JSON.stringify(payload);
+    if (signature === lastPersistedWorkflowSignatureRef.current) return;
+
+    const sequence = autoSaveSequenceRef.current + 1;
+    autoSaveSequenceRef.current = sequence;
+    let dismissTimeout: number | null = null;
+    const unsavedFrame = requestAnimationFrame(() => setAutoSaveStatus("unsaved"));
+
+    const saveTimeout = window.setTimeout(() => {
+      setAutoSaveStatus("saving");
+      void fetch(`/api/workflows/${workflowId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then((response) => {
+          if (!response.ok) throw new Error("Failed to save workflow");
+          if (autoSaveSequenceRef.current !== sequence) return;
+          lastPersistedWorkflowSignatureRef.current = signature;
+          setAutoSaveStatus("saved");
+          dismissTimeout = window.setTimeout(() => {
+            if (autoSaveSequenceRef.current === sequence) setAutoSaveStatus(null);
+          }, 1500);
+        })
+        .catch(() => {
+          if (autoSaveSequenceRef.current !== sequence) return;
+          toast({ description: "Failed to save workflow" });
+          setAutoSaveStatus(null);
+        });
+    }, 1000);
+
+    return () => {
+      cancelAnimationFrame(unsavedFrame);
+      window.clearTimeout(saveTimeout);
+      if (dismissTimeout) window.clearTimeout(dismissTimeout);
+    };
+  }, [buildPersistedWorkflowPayload, workflowDirtyRevision, workflowId, workflowLoaded]);
 
   const setNodeHandleValue = useCallback((nodeId: string, handleId: string, value: unknown) => {
     setNodeValues((current) => {
-      if (current[nodeId]?.[handleId] === value) return current;
+      if (JSON.stringify(current[nodeId]?.[handleId]) === JSON.stringify(value)) return current;
       return {
         ...current,
         [nodeId]: {
@@ -99,7 +273,8 @@ export default function WorkflowCanvasPage() {
         },
       };
     });
-  }, []);
+    markWorkflowDirty();
+  }, [markWorkflowDirty]);
 
   const onNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChangeBase>[0]) => {
@@ -255,6 +430,7 @@ export default function WorkflowCanvasPage() {
     setPendingNodeIds,
     addHistoryEntry,
     setSelectionBoxNodeIds,
+    markWorkflowDirty,
   });
 
   return (
@@ -264,7 +440,7 @@ export default function WorkflowCanvasPage() {
         {/* <PromoTopbar /> */}
         <Sidebar open={sidebarOpen} setOpen={setSidebarOpen} />
 
-        <div className="relative flex-1">
+        <div className="relative flex-1 overflow-hidden">
           <NodeValueContext.Provider value={{ values: nodeValues, setNodeHandleValue }}>
           <WorkflowRunContext.Provider value={{ runningNodeIds, pendingNodeIds, runWorkflow, runSelectedNodes, cancelWorkflow, workflowRunning, selectedExecutableCount, addHistoryEntry, historyEntries, historyOpen, setHistoryOpen }}>
           <WorkflowEditContext.Provider value={{ undo, redo, recordSnapshot, canUndo, canRedo }}>
@@ -308,6 +484,7 @@ export default function WorkflowCanvasPage() {
           panOnScroll={false}
           selectNodesOnDrag={false}
 
+          defaultViewport={{ x: 0, y: 0, zoom: 0.5 }}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
           // canvas background color, matched from reference screenshots (#f4f4f4)
@@ -322,6 +499,7 @@ export default function WorkflowCanvasPage() {
           />
           <CanvasZoomKeyboardHandler />
           <TopLeftCanvasTitle />
+          <AutoSaveIndicator status={autoSaveStatus} />
           <TopRightCanvasControls />
           <BottomRightCanvasControls />
           <BottomToolbar interactionMode={interactionMode} setInteractionMode={setInteractionMode} />
