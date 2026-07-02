@@ -301,8 +301,8 @@ export function RequestUploadField({ nodeId, id, label, type, value = "", onRena
                   </div>
                 ) : uploadedUrl ? (
                   type === "image_field" ? (
-                    <div className="relative">
-                      <img src={uploadedUrl} alt="Uploaded preview" className="h-32 w-full rounded-lg border border-gray-200 object-cover" />
+                    <div className="relative inline-block">
+                      <img src={uploadedUrl} alt="Uploaded preview" className="h-24 w-24 rounded-lg border border-gray-200 object-cover" />
                       <button
                         type="button"
                         onClick={() => {

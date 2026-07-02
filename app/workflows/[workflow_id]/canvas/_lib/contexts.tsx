@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, useMemo } from "react";
 import { useEdges } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
 import type { NodeValueContextValue, WorkflowEditContextValue, WorkflowRunContextValue } from "./types";
@@ -42,13 +42,15 @@ export function useConnectedInputValue(nodeId: string, handleId: string) {
 export function useConnectedInputValues(nodeId: string, handleId: string) {
   const edges = useEdges();
   const { values } = useNodeValueContext();
-  const matchedEdges = edges.filter((item) => item.target === nodeId && item.targetHandle === handleId);
-  return {
-    isConnected: matchedEdges.length > 0,
-    values: matchedEdges.map((edge) => {
-      const sourceHandle = edge.sourceHandle ?? "result";
-      const sourceValues = values[edge.source] ?? {};
-      return sourceValues[sourceHandle];
-    }),
-  };
+  return useMemo(() => {
+    const matchedEdges = edges.filter((item) => item.target === nodeId && item.targetHandle === handleId);
+    return {
+      isConnected: matchedEdges.length > 0,
+      values: matchedEdges.map((edge) => {
+        const sourceHandle = edge.sourceHandle ?? "result";
+        const sourceValues = values[edge.source] ?? {};
+        return sourceValues[sourceHandle];
+      }),
+    };
+  }, [edges, nodeId, handleId, values]);
 }

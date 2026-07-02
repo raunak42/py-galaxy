@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   ReactFlow,
@@ -494,6 +494,14 @@ export default function WorkflowCanvasPage() {
     markWorkflowDirty,
   });
 
+  const nodeValueCtx = useMemo(() => ({ values: nodeValues, setNodeHandleValue }), [nodeValues, setNodeHandleValue]);
+  const workflowRunCtx = useMemo(() => ({
+    runningNodeIds, pendingNodeIds, runWorkflow, runSelectedNodes, cancelWorkflow,
+    workflowRunning, selectedExecutableCount, addHistoryEntry, historyEntries, historyOpen, setHistoryOpen,
+  }), [runningNodeIds, pendingNodeIds, runWorkflow, runSelectedNodes, cancelWorkflow,
+    workflowRunning, selectedExecutableCount, addHistoryEntry, historyEntries, historyOpen, setHistoryOpen]);
+  const workflowEditCtx = useMemo(() => ({ undo, redo, recordSnapshot, canUndo, canRedo }), [undo, redo, recordSnapshot, canUndo, canRedo]);
+
   return (
     <ReactFlowProvider>
       <Toaster />
@@ -507,9 +515,9 @@ export default function WorkflowCanvasPage() {
               <Loader2 className="h-8 w-8 animate-spin text-[#444444]" />
             </div>
           ) : (
-          <NodeValueContext.Provider value={{ values: nodeValues, setNodeHandleValue }}>
-          <WorkflowRunContext.Provider value={{ runningNodeIds, pendingNodeIds, runWorkflow, runSelectedNodes, cancelWorkflow, workflowRunning, selectedExecutableCount, addHistoryEntry, historyEntries, historyOpen, setHistoryOpen }}>
-          <WorkflowEditContext.Provider value={{ undo, redo, recordSnapshot, canUndo, canRedo }}>
+          <NodeValueContext.Provider value={nodeValueCtx}>
+          <WorkflowRunContext.Provider value={workflowRunCtx}>
+          <WorkflowEditContext.Provider value={workflowEditCtx}>
           <SelectionBoxNodeContext.Provider value={selectionBoxNodeIds}>
           <WorkflowHistorySidebar />
           <SelectionRunOverlay nodes={nodes} />
@@ -560,8 +568,8 @@ export default function WorkflowCanvasPage() {
           {/* dot grid: gap=30.5, size=2.5 (radius) */}
           <Background
             variant={BackgroundVariant.Dots}
-            gap={30.5}
-            size={2.5}
+            gap={31}
+            size={3}
             color="#cacaca"
           />
           <CanvasZoomKeyboardHandler />

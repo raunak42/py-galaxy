@@ -6,7 +6,7 @@ import { getBezierPath } from "@xyflow/react";
 import type { ConnectionLineComponentProps } from "@xyflow/react";
 import { HANDLE_COLORS, handleTypeFromId } from "../_lib/constants";
 import { SelectionBoxNodeContext, useWorkflowEditContext } from "../_lib/contexts";
-export function FieldHandle({
+export const FieldHandle = React.memo(function FieldHandle({
   id,
   color = "#f59e0b",
   top = 14,
@@ -41,9 +41,9 @@ export function FieldHandle({
       />
     </div>
   );
-}
+});
 
-export function SourceFieldHandle({
+export const SourceFieldHandle = React.memo(function SourceFieldHandle({
   id,
   color = "#f59e0b",
   top = 31,
@@ -78,9 +78,9 @@ export function SourceFieldHandle({
       />
     </div>
   );
-}
+});
 
-export function RemovableEdge({
+export const RemovableEdge = React.memo(function RemovableEdge({
   id,
   sourceX,
   sourceY,
@@ -172,12 +172,12 @@ export function RemovableEdge({
       )}
     </>
   );
-}
+});
 
 export const edgeTypes = {
   removable: RemovableEdge,
 };
-export function CustomConnectionLine({
+export const CustomConnectionLine = React.memo(function CustomConnectionLine({
   fromX,
   fromY,
   toX,
@@ -227,6 +227,6 @@ export function CustomConnectionLine({
       )}
     </g>
   );
-}
+});
 
 export { AddToRequestButton } from "./tooltips";
