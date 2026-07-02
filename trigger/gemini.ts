@@ -12,6 +12,10 @@ const geminiPayloadSchema = z.object({
   fileUrls: z.array(z.string().min(1)).default([]),
   temperature: z.number().min(0).max(2).optional(),
   maxOutputTokens: z.number().int().positive().optional(),
+  topP: z.number().min(0).max(1).optional(),
+  topK: z.number().int().min(0).optional(),
+  stopSequences: z.array(z.string()).optional(),
+  responseMimeType: z.string().optional(),
 });
 
 export type GeminiTaskPayload = z.infer<typeof geminiPayloadSchema>;
@@ -112,6 +116,10 @@ export const runGeminiTask = task({
       generationConfig: {
         ...(payload.temperature === undefined ? {} : { temperature: payload.temperature }),
         ...(payload.maxOutputTokens === undefined ? {} : { maxOutputTokens: payload.maxOutputTokens }),
+        ...(payload.topP === undefined ? {} : { topP: payload.topP }),
+        ...(payload.topK === undefined ? {} : { topK: payload.topK }),
+        ...(payload.stopSequences === undefined ? {} : { stopSequences: payload.stopSequences }),
+        ...(payload.responseMimeType === undefined ? {} : { responseMimeType: payload.responseMimeType }),
       },
     }));
 

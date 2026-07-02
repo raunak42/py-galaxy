@@ -16,6 +16,10 @@ const requestSchema = z.object({
   fileUrls: z.array(z.string().min(1)).default([]),
   temperature: z.number().min(0).max(2).optional(),
   maxOutputTokens: z.number().int().positive().optional(),
+  topP: z.number().min(0).max(1).optional(),
+  topK: z.number().int().min(0).optional(),
+  stopSequences: z.array(z.string()).optional(),
+  responseMimeType: z.string().optional(),
 });
 
 export async function POST(request: Request) {
