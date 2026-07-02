@@ -3,12 +3,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useReactFlow } from "@xyflow/react";
-import { Search, StickyNote, Layers, Crop, ChevronRight, Plus, X, ArrowLeft } from "lucide-react";
+import { Search, StickyNote, Layers, Crop, ChevronRight, Plus, X, ArrowLeft, PanelLeftOpen } from "lucide-react";
 import { useWorkflowEditContext, useWorkflowRunContext } from "../_lib/contexts";
-import { HISTORY_PANEL_OFFSET } from "../_lib/constants";
+import { HISTORY_PANEL_OFFSET, GEMINI_MODEL_NAME, PERMANENT_NODE_IDS } from "../_lib/constants";
 import { HoverTooltip } from "./tooltips";
 export function CanvasZoomKeyboardHandler() {
-  const { zoomIn, zoomOut } = useReactFlow();
+  const { zoomIn, zoomOut, getNodes, deleteElements } = useReactFlow();
   const { undo, redo, canUndo, canRedo } = useWorkflowEditContext();
 
   useEffect(() => {
@@ -25,7 +25,7 @@ export function CanvasZoomKeyboardHandler() {
 
       const mod = e.metaKey || e.ctrlKey;
 
-      if (mod && e.key === "z") {
+      if (mod && e.code === "KeyZ") {
         e.preventDefault();
         if (e.shiftKey) {
           if (canRedo) redo();
@@ -35,9 +35,19 @@ export function CanvasZoomKeyboardHandler() {
         return;
       }
 
-      if (mod && (e.key === "y")) {
+      if (mod && e.code === "KeyY") {
         e.preventDefault();
         if (canRedo) redo();
+        return;
+      }
+
+      // Delete/Backspace removes selected nodes (except permanent ones)
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const selectedNodes = getNodes().filter((node) => node.selected && !PERMANENT_NODE_IDS.has(node.id));
+        if (selectedNodes.length > 0) {
+          e.preventDefault();
+          deleteElements({ nodes: selectedNodes });
+        }
         return;
       }
 
@@ -62,7 +72,7 @@ export function CanvasZoomKeyboardHandler() {
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () =>
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [canRedo, canUndo, redo, undo, zoomIn, zoomOut]);
+  }, [canRedo, canUndo, redo, undo, zoomIn, zoomOut, deleteElements, getNodes]);
 
   return null;
 }
@@ -82,7 +92,7 @@ export const pickerGroups: PickerGroup[] = [
   },
   {
     label: "LLM Call",
-    items: [{ icon: Layers, label: "Gemini 3.1 Pro" }],
+    items: [{ icon: Layers, label: GEMINI_MODEL_NAME }],
   },
 ];
 
@@ -263,7 +273,7 @@ export function NodePicker({
                     key={`${groupLabel}-${label}`}
                     type="button"
                     draggable
-                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : label === "Crop Image" ? onAddCrop : label === "Sticky Note" ? onAddStickyNote : undefined}
+                    onClick={label === GEMINI_MODEL_NAME ? onAddGemini : label === "Crop Image" ? onAddCrop : label === "Sticky Note" ? onAddStickyNote : undefined}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-gray-50"
                   >
                     <Icon size={20} strokeWidth={2} className="h-5 w-5 shrink-0 text-gray-700" />
@@ -329,7 +339,7 @@ export function NodePicker({
                     key={label}
                     type="button"
                     draggable
-                    onClick={label === "Gemini 3.1 Pro" ? onAddGemini : label === "Crop Image" ? onAddCrop : label === "Sticky Note" ? onAddStickyNote : undefined}
+                    onClick={label === GEMINI_MODEL_NAME ? onAddGemini : label === "Crop Image" ? onAddCrop : label === "Sticky Note" ? onAddStickyNote : undefined}
                     className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-gray-50"
                   >
                     <Icon size={16} strokeWidth={2} className="h-4 w-4 text-gray-700" />
@@ -354,12 +364,37 @@ export function NodePicker({
   );
 }
 
-export function TopLeftCanvasTitle() {
+export function TopLeftCanvasTitle({
+  sidebarOpen,
+  setSidebarOpen,
+}: {
+  sidebarOpen: boolean;
+  setSidebarOpen: (v: boolean) => void;
+}) {
   const [title, setTitle] = useState("Trial Task Workflow");
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   return (
     <div className="pointer-events-none absolute left-4 top-4 z-50 sm:left-16">
       <div className="pointer-events-auto flex items-center gap-2">
+        {isMobile && !sidebarOpen && (
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#737373] transition-colors hover:bg-[#eeeeec] hover:text-[#1b1b18]"
+            aria-label="Open sidebar"
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </button>
+        )}
         <div className="inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white/85 px-2 py-1.5 shadow-md backdrop-blur">
           <HoverTooltip text="Back to Workflow" side="bottom" triggerClassName="inline-flex">
             <a
