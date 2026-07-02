@@ -1,3 +1,4 @@
+import { ffmpeg } from "@trigger.dev/build/extensions/core";
 import { defineConfig } from "@trigger.dev/sdk";
 
 export default defineConfig({
@@ -16,4 +17,7 @@ export default defineConfig({
     },
   },
   dirs: ["./trigger"],
+  build: {
+    extensions: [ffmpeg()],
+  },
 });
