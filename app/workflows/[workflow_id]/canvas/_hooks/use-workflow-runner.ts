@@ -59,6 +59,22 @@ export function useWorkflowRunner({
         outputs[node.id] = { ...(outputs[node.id] ?? {}), [fieldId]: field.value };
       }
     }
+    for (const node of nodes) {
+      if (node.type === "geminiPreview" || node.type === "cropImage") {
+        const shouldClear = !targetIds || targetIds.has(node.id);
+        if (shouldClear && outputs[node.id]) outputs[node.id] = {};
+      }
+    }
+    setNodeValues((current) => {
+      const next = { ...current };
+      for (const node of nodes) {
+        if (node.type === "geminiPreview" || node.type === "cropImage") {
+          const shouldClear = !targetIds || targetIds.has(node.id);
+          if (shouldClear) next[node.id] = {};
+        }
+      }
+      return next;
+    });
     const allExecutable = nodes.filter((node) => node.type === "geminiPreview" || node.type === "cropImage");
     const executable = targetIds ? allExecutable.filter((node) => targetIds.has(node.id)) : allExecutable;
     const executableIds = new Set(executable.map((node) => node.id));
@@ -86,8 +102,12 @@ export function useWorkflowRunner({
           }
           const sourceNode = nodeById.get(sourceId);
           if (isExecutableNode(sourceNode)) {
-            externalUpstream.add(sourceId);
-            if (!selectedBlockedBy.has(selectedNode.id)) selectedBlockedBy.set(selectedNode.id, sourceId);
+            const existingOutputs = nodeValues[sourceId];
+            const hasOutput = existingOutputs && Object.values(existingOutputs).some(v => v !== undefined && v !== null && v !== "");
+            if (!hasOutput) {
+              externalUpstream.add(sourceId);
+              if (!selectedBlockedBy.has(selectedNode.id)) selectedBlockedBy.set(selectedNode.id, sourceId);
+            }
             edges.filter((edge) => edge.target === sourceId).forEach((edge) => queue.push(edge.source));
           }
         }
