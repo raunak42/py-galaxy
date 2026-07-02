@@ -119,7 +119,7 @@ export function CropImageNode({ id, data }: { id: string; data?: Record<string, 
         runState={localRunning ? "running" : runningNodeIds.has(id) ? "workflow-running" : isPending ? "pending" : "idle"}
         onCancel={cancelCropRun}
       />
-      <NodeMenu open={menuOpen} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />
+      <NodeMenu nodeId={id} open={menuOpen} anchorRef={menuButtonRef} onClose={() => setMenuOpen(false)} />
       <div className="px-4 py-4">
         <div className="space-y-4">
           <CropImageUpload nodeId={id} id="input-image" label="Input Image" required />
@@ -179,13 +179,23 @@ export function CropImageNode({ id, data }: { id: string; data?: Record<string, 
 export function CropImageUpload({ nodeId, id, label, required }: { nodeId: string; id: string; label: string; required?: boolean }) {
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
-  const [uploadedUrl, setUploadedUrl] = useState("");
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [uploadedUrl, setUploadedUrl] = useState(() => {
+    const stored = values[nodeId]?.[id];
+    return typeof stored === "string" ? stored : "";
+  });
   const [uploading, setUploading] = useState(false);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const connected = useConnectedInputValue(nodeId, id);
   const isConnected = connected.isConnected;
-  const { setNodeHandleValue } = useNodeValueContext();
   const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[id];
+    if (typeof stored === "string" && stored && stored !== uploadedUrl) {
+      setUploadedUrl(stored);
+    }
+  }, [id, nodeId, uploadedUrl, values]);
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, uploadedUrl);
@@ -203,7 +213,7 @@ export function CropImageUpload({ nodeId, id, label, required }: { nodeId: strin
     } finally {
       setUploading(false);
     }
-  }, []);
+  }, [recordSnapshot]);
 
   const displayValue = isConnected ? displayConnectedValue(connected.value) : uploadedUrl;
 
@@ -258,12 +268,24 @@ export function CropImageUpload({ nodeId, id, label, required }: { nodeId: strin
 }
 
 export function CropImageNumber({ nodeId, id, label, defaultValue }: { nodeId: string; id: string; label: string; defaultValue: string }) {
-  const [value, setValue] = useState(defaultValue);
+  const { values, setNodeHandleValue } = useNodeValueContext();
+  const [value, setValue] = useState(() => {
+    const stored = values[nodeId]?.[id];
+    if (stored !== undefined && stored !== null) return String(stored);
+    return defaultValue;
+  });
   const connected = useConnectedInputValue(nodeId, id);
   const isConnected = connected.isConnected;
   const displayValue = isConnected ? displayConnectedValue(connected.value) : value;
-  const { setNodeHandleValue } = useNodeValueContext();
   const { recordSnapshot } = useWorkflowEditContext();
+
+  useEffect(() => {
+    const stored = values[nodeId]?.[id];
+    const storedStr = typeof stored === "number" ? String(stored) : typeof stored === "string" ? stored : null;
+    if (storedStr !== null && storedStr !== value) {
+      setValue(storedStr);
+    }
+  }, [id, nodeId, value, values]);
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, Number(value));
