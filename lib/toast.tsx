@@ -102,11 +102,12 @@ export function Toaster() {
   const { toasts: items } = useToast();
 
   return (
-    <div className="fixed bottom-20 left-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
+    <div className="fixed inset-x-0 bottom-20 z-[10050] flex flex-col items-center gap-2 px-4 pointer-events-none">
       {items.map((item) => (
         <div
           key={item.id}
-          className="animate-fade-in whitespace-pre-line rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-[#3d3d41] shadow-xl pointer-events-auto"
+          className="animate-fade-in w-fit whitespace-pre-line rounded-lg border border-gray-200 bg-white px-4 py-2 text-center text-sm text-[#3d3d41] shadow-xl pointer-events-auto"
+          style={{ maxWidth: "min(560px, calc(100vw - 32px))" }}
         >
           {item.message}
         </div>
