@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useCallback, useEffect, useId, useLayoutEffect, useState, type ComponentType, type ReactNode } from "react";
-import { useViewport } from "@xyflow/react";
+import { useReactFlow, useViewport } from "@xyflow/react";
 import { createPortal } from "react-dom";
-import { RotateCcw, MoreHorizontal, Play, RefreshCw } from "lucide-react";
+import { RotateCcw, MoreHorizontal, Play, RefreshCw, Copy, Lock, Trash2, Link } from "lucide-react";
 import { InfoTooltip } from "./tooltips";
+import { PERMANENT_NODE_IDS } from "../_lib/constants";
+import { useNodeValueContext } from "../_lib/contexts";
 export type PickerMenuItem = {
   key: string;
   label: string;
@@ -156,17 +158,94 @@ export function FloatingPickerMenu({
 }
 
 export function NodeMenu({
+  nodeId,
   open,
   anchorRef,
   onClose,
 }: {
+  nodeId: string;
   open: boolean;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
   onClose: () => void;
 }) {
   const { zoom } = useViewport();
+  const { getNodes, getEdges, setNodes, deleteElements, addNodes, addEdges } = useReactFlow();
+  const { values, setNodeHandleValue } = useNodeValueContext();
   const itemClass =
     "relative flex h-9 cursor-pointer select-none items-center gap-3 rounded-[14px] px-3.5 text-sm outline-none transition-colors hover:bg-gray-200 hover:text-gray-950 focus:bg-gray-200 focus:text-gray-950 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0";
+
+  const duplicateNode = useCallback(() => {
+    const node = getNodes().find((n) => n.id === nodeId);
+    if (!node) return;
+    const newId = `${nodeId}-copy-${Date.now()}`;
+    addNodes({
+      id: newId,
+      type: node.type,
+      position: { x: node.position.x + 50, y: node.position.y + 50 },
+      data: { ...node.data },
+    });
+    const nodeVals = values[nodeId];
+    if (nodeVals) {
+      for (const [handleId, val] of Object.entries(nodeVals)) {
+        setNodeHandleValue(newId, handleId, val);
+      }
+    }
+    const incomingEdges = getEdges().filter((e) => e.target === nodeId);
+    addEdges(
+      incomingEdges.map((e) => ({
+        source: e.source,
+        sourceHandle: e.sourceHandle,
+        target: newId,
+        targetHandle: e.targetHandle,
+        type: e.type,
+        animated: e.animated,
+        style: e.style ? { ...e.style } : undefined,
+        id: `${e.id}-copy-in-${Date.now()}`,
+      })),
+    );
+  }, [addEdges, addNodes, getEdges, getNodes, nodeId, setNodeHandleValue, values]);
+
+  const duplicateWithEdges = useCallback(() => {
+    const node = getNodes().find((n) => n.id === nodeId);
+    if (!node) return;
+    const newId = `${nodeId}-copy-${Date.now()}`;
+    addNodes({
+      id: newId,
+      type: node.type,
+      position: { x: node.position.x + 50, y: node.position.y + 50 },
+      data: { ...node.data },
+    });
+    const nodeVals = values[nodeId];
+    if (nodeVals) {
+      for (const [handleId, val] of Object.entries(nodeVals)) {
+        setNodeHandleValue(newId, handleId, val);
+      }
+    }
+    const allEdges = getEdges().filter((e) => e.target === nodeId || e.source === nodeId);
+    addEdges(
+      allEdges.map((e) => ({
+        source: e.source === nodeId ? newId : e.source,
+        sourceHandle: e.sourceHandle,
+        target: e.target === nodeId ? newId : e.target,
+        targetHandle: e.targetHandle,
+        type: e.type,
+        animated: e.animated,
+        style: e.style ? { ...e.style } : undefined,
+        id: `${e.id}-copy-all-${Date.now()}`,
+      })),
+    );
+  }, [addEdges, addNodes, getEdges, getNodes, nodeId, setNodeHandleValue, values]);
+
+  const deleteNode = useCallback(() => {
+    if (PERMANENT_NODE_IDS.has(nodeId)) return;
+    deleteElements({ nodes: [{ id: nodeId }] });
+  }, [deleteElements, nodeId]);
+
+  const lockNode = useCallback(() => {
+    const node = getNodes().find((n) => n.id === nodeId);
+    if (!node) return;
+    setNodes((nds) => nds.map((n) => n.id === nodeId ? { ...n, draggable: n.draggable === false ? true : false, selected: false } : n));
+  }, [getNodes, nodeId, setNodes]);
 
   return (
     <FloatingPickerMenu
@@ -179,10 +258,10 @@ export function NodeMenu({
       contentClassName="py-menu-content z-50 flex min-w-[8rem] w-[200px] flex-col gap-1 overflow-hidden rounded-[18px] bg-popover p-2 text-popover-foreground shadow-lg"
       itemClassName={itemClass}
       items={[
-        { key: "duplicate", label: "Duplicate" },
-        { key: "duplicate-with-edges", label: "Duplicate with Edges" },
-        { key: "lock", label: "Lock" },
-        { key: "delete", label: "Delete" },
+        { key: "duplicate", label: "Duplicate", icon: Copy, onSelect: duplicateNode },
+        { key: "duplicate-with-edges", label: "Duplicate with Edges", icon: Link, onSelect: duplicateWithEdges },
+        { key: "lock", label: "Lock", icon: Lock, onSelect: lockNode },
+        { key: "delete", label: "Delete", icon: Trash2, onSelect: deleteNode },
       ]}
     />
   );
