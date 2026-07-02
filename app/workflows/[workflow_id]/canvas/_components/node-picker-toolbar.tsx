@@ -4,15 +4,16 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { useReactFlow } from "@xyflow/react";
 import { Search, StickyNote, Layers, Crop, ChevronRight, Plus, X, ArrowLeft } from "lucide-react";
-import { useWorkflowRunContext } from "../_lib/contexts";
+import { useWorkflowEditContext, useWorkflowRunContext } from "../_lib/contexts";
 import { HISTORY_PANEL_OFFSET } from "../_lib/constants";
 import { HoverTooltip } from "./tooltips";
 export function CanvasZoomKeyboardHandler() {
   const { zoomIn, zoomOut } = useReactFlow();
+  const { undo, redo, canUndo, canRedo } = useWorkflowEditContext();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't hijack +/- while the user is typing in an input, textarea,
+      // Don't hijack shortcuts while the user is typing in an input, textarea,
       // or any contenteditable element (e.g. sidebar search, node fields).
       const target = e.target as HTMLElement | null;
       const isTyping =
@@ -21,6 +22,24 @@ export function CanvasZoomKeyboardHandler() {
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
       if (isTyping) return;
+
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (mod && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (canRedo) redo();
+        } else {
+          if (canUndo) undo();
+        }
+        return;
+      }
+
+      if (mod && (e.key === "y")) {
+        e.preventDefault();
+        if (canRedo) redo();
+        return;
+      }
 
       // Handle +/- both with and without Cmd/Ctrl, and redirect them to
       // canvas zoom instead of the browser's native page zoom. preventDefault()
@@ -43,7 +62,7 @@ export function CanvasZoomKeyboardHandler() {
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () =>
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [zoomIn, zoomOut]);
+  }, [canRedo, canUndo, redo, undo, zoomIn, zoomOut]);
 
   return null;
 }
@@ -197,10 +216,12 @@ export function NodePicker({
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div
-      className="fixed z-[10000]"
-      style={{ left: position.x, top: position.y }}
-    >
+    <div className="fixed inset-0 z-[10000]" onClick={onClose}>
+      <div
+        className="absolute"
+        style={{ left: position.x, top: position.y }}
+        onClick={(e) => e.stopPropagation()}
+      >
       <div className="relative h-[430px] w-[529px]" onMouseLeave={() => setActiveGroup(null)}>
         <div className="h-[430px] w-[280px] overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl backdrop-blur">
           <div className="p-2.5">
@@ -326,6 +347,7 @@ export function NodePicker({
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>,
     document.body,

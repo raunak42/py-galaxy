@@ -6,7 +6,7 @@ import { RotateCcw, Coins, File, Loader2 } from "lucide-react";
 import { IconUpload } from "@tabler/icons-react";
 import { toast } from "@/lib/toast";
 import { displayConnectedValue, isImageUrl } from "../_lib/utils";
-import { useConnectedInputValue, useNodeValueContext, useWorkflowRunContext } from "../_lib/contexts";
+import { useConnectedInputValue, useNodeValueContext, useWorkflowEditContext, useWorkflowRunContext } from "../_lib/contexts";
 import { AddToRequestButton, FieldHandle } from "./edges";
 import { HoverTooltip, InfoTooltip } from "./tooltips";
 import { MediaLibraryModal } from "./media-library";
@@ -185,12 +185,14 @@ export function CropImageUpload({ nodeId, id, label, required }: { nodeId: strin
   const connected = useConnectedInputValue(nodeId, id);
   const isConnected = connected.isConnected;
   const { setNodeHandleValue } = useNodeValueContext();
+  const { recordSnapshot } = useWorkflowEditContext();
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, uploadedUrl);
   }, [id, nodeId, setNodeHandleValue, uploadedUrl]);
 
   const handleUpload = useCallback(async (file: File) => {
+    recordSnapshot();
     setUploading(true);
     try {
       const url = await uploadImageWithTransloadit(file);
@@ -261,13 +263,18 @@ export function CropImageNumber({ nodeId, id, label, defaultValue }: { nodeId: s
   const isConnected = connected.isConnected;
   const displayValue = isConnected ? displayConnectedValue(connected.value) : value;
   const { setNodeHandleValue } = useNodeValueContext();
+  const { recordSnapshot } = useWorkflowEditContext();
 
   useEffect(() => {
     setNodeHandleValue(nodeId, id, Number(value));
   }, [id, nodeId, setNodeHandleValue, value]);
 
-  const reset = () => setValue(defaultValue);
+  const reset = () => {
+    recordSnapshot();
+    setValue(defaultValue);
+  };
   const update = (next: string) => {
+    recordSnapshot();
     const parsed = Number(next);
     if (Number.isNaN(parsed)) {
       setValue(next);

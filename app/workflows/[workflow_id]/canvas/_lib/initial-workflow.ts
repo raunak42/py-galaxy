@@ -1,6 +1,35 @@
 import type { Edge, Node } from "@xyflow/react";
 import { HANDLE_COLORS } from "./constants";
+
 export const initialNodes: Node[] = [
+  {
+    id: "request-inputs",
+    type: "request",
+    position: { x: 70, y: 210 },
+    deletable: false,
+    data: {
+      fields: [
+        {
+          type: "text_field",
+          id: "text_field",
+          label: "text_field",
+          value: "",
+        },
+      ],
+    },
+  },
+  {
+    id: "response",
+    type: "response",
+    position: { x: 1980, y: 330 },
+    deletable: false,
+    data: {},
+  },
+];
+
+export const initialEdges: Edge[] = [];
+
+export const sampleWorkflowNodes: Node[] = [
   {
     id: "request-inputs",
     type: "request",
@@ -68,7 +97,7 @@ export const initialNodes: Node[] = [
   },
 ];
 
-export const initialEdges: Edge[] = [
+export const sampleWorkflowEdges: Edge[] = [
   {
     id: "e-request-text-gemini-1-prompt",
     source: "request-inputs",

@@ -236,7 +236,7 @@ export function Sidebar({
             </HoverTooltip>
             <div className="flex items-center justify-center px-4 py-2">
               <div className="flex min-w-0 items-center gap-2">
-                <div>
+                <div className="flex items-center">
                   <UserButton userProfileMode="modal" />
                 </div>
                 {open ? (
