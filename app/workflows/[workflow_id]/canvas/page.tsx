@@ -52,12 +52,14 @@ function sanitizeEdgeForPersistence(edge: Edge) {
   return clean;
 }
 
+type UndoRedoEntry = { nodes: Node[]; edges: Edge[]; values: NodeOutputValues };
+
 function buildWorkflowPersistencePayload(
   currentNodes: Node[],
   currentEdges: Edge[],
   currentNodeValues: NodeOutputValues,
-  undoStack: Array<{ nodes: Node[]; edges: Edge[] }>,
-  redoStack: Array<{ nodes: Node[]; edges: Edge[] }>,
+  undoStack: UndoRedoEntry[],
+  redoStack: UndoRedoEntry[],
 ) {
   return {
     nodes: currentNodes.map(sanitizeNodeForPersistence),
@@ -94,8 +96,8 @@ export default function WorkflowCanvasPage() {
   const latestEdgesRef = useRef(edges);
   const latestNodeValuesRef = useRef(nodeValues);
   const [workflowDirtyRevision, setWorkflowDirtyRevision] = useState(0);
-  const undoStackRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
-  const redoStackRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
+  const undoStackRef = useRef<UndoRedoEntry[]>([]);
+  const redoStackRef = useRef<UndoRedoEntry[]>([]);
   const [editHistoryCounts, setEditHistoryCounts] = useState({ undo: 0, redo: 0 });
 
   useEffect(() => {
@@ -119,32 +121,37 @@ export default function WorkflowCanvasPage() {
   }, []);
 
   const recordSnapshot = useCallback(() => {
-    undoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
+    const snap = cloneWorkflowSnapshot(nodes, edges);
+    undoStackRef.current.push({ ...snap, values: JSON.parse(JSON.stringify(nodeValues)) });
     if (undoStackRef.current.length > 80) undoStackRef.current.shift();
     redoStackRef.current = [];
     markWorkflowDirty();
     refreshEditHistoryCounts();
-  }, [edges, markWorkflowDirty, nodes, refreshEditHistoryCounts]);
+  }, [edges, markWorkflowDirty, nodeValues, nodes, refreshEditHistoryCounts]);
 
   const undo = useCallback(() => {
     const previous = undoStackRef.current.pop();
     if (!previous) return;
-    redoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
+    const currentSnap = cloneWorkflowSnapshot(nodes, edges);
+    redoStackRef.current.push({ ...currentSnap, values: JSON.parse(JSON.stringify(nodeValues)) });
     setNodes(previous.nodes);
     setEdges(previous.edges);
+    setNodeValues(previous.values);
     markWorkflowDirty();
     refreshEditHistoryCounts();
-  }, [edges, markWorkflowDirty, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
+  }, [edges, markWorkflowDirty, nodeValues, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
 
   const redo = useCallback(() => {
     const next = redoStackRef.current.pop();
     if (!next) return;
-    undoStackRef.current.push(cloneWorkflowSnapshot(nodes, edges));
+    const currentSnap = cloneWorkflowSnapshot(nodes, edges);
+    undoStackRef.current.push({ ...currentSnap, values: JSON.parse(JSON.stringify(nodeValues)) });
     setNodes(next.nodes);
     setEdges(next.edges);
+    setNodeValues(next.values);
     markWorkflowDirty();
     refreshEditHistoryCounts();
-  }, [edges, markWorkflowDirty, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
+  }, [edges, markWorkflowDirty, nodeValues, nodes, refreshEditHistoryCounts, setEdges, setNodes]);
 
   const canUndo = editHistoryCounts.undo > 0;
   const canRedo = editHistoryCounts.redo > 0;
@@ -214,8 +221,18 @@ export default function WorkflowCanvasPage() {
         setNodes(loadedNodes);
         setEdges(loadedEdges);
         setNodeValues(loadedNodeValues);
-        undoStackRef.current = Array.isArray(workflowJson.workflow.undoStack) ? workflowJson.workflow.undoStack : [];
-        redoStackRef.current = Array.isArray(workflowJson.workflow.redoStack) ? workflowJson.workflow.redoStack : [];
+        const rawUndo = Array.isArray(workflowJson.workflow.undoStack) ? workflowJson.workflow.undoStack : [];
+        const rawRedo = Array.isArray(workflowJson.workflow.redoStack) ? workflowJson.workflow.redoStack : [];
+        undoStackRef.current = rawUndo.map((entry) => ({
+          nodes: entry.nodes ?? [],
+          edges: entry.edges ?? [],
+          values: ("values" in entry ? entry.values : {}) as NodeOutputValues,
+        }));
+        redoStackRef.current = rawRedo.map((entry) => ({
+          nodes: entry.nodes ?? [],
+          edges: entry.edges ?? [],
+          values: ("values" in entry ? entry.values : {}) as NodeOutputValues,
+        }));
         lastPersistedWorkflowSignatureRef.current = JSON.stringify(buildWorkflowPersistencePayload(
           loadedNodes,
           loadedEdges,
@@ -326,11 +343,7 @@ export default function WorkflowCanvasPage() {
 
   const onNodesChange = useCallback(
     (changes: Parameters<typeof onNodesChangeBase>[0]) => {
-      const meaningful = changes.some((change) => {
-        const maybeDragging = "dragging" in change ? change.dragging : false;
-        return change.type === "remove" || change.type === "add" || (change.type === "position" && !maybeDragging);
-      });
-      if (meaningful) recordSnapshot();
+      if (changes.some((change) => change.type === "remove" || change.type === "add")) recordSnapshot();
       onNodesChangeBase(
         changes.filter(
           (change) => change.type !== "remove" || !PERMANENT_NODE_IDS.has(change.id),
@@ -509,6 +522,7 @@ export default function WorkflowCanvasPage() {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onConnectEnd={onConnectEnd}
+          onNodeDragStart={recordSnapshot}
           onNodeClick={(event, node) => {
             setSelectionBoxNodeIds(new Set());
             if (event.shiftKey || event.ctrlKey || event.metaKey) {
@@ -551,7 +565,7 @@ export default function WorkflowCanvasPage() {
             color="#cacaca"
           />
           <CanvasZoomKeyboardHandler />
-          <TopLeftCanvasTitle />
+          <TopLeftCanvasTitle sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
           <AutoSaveIndicator status={autoSaveStatus} />
           <TopRightCanvasControls />
           <BottomRightCanvasControls />
