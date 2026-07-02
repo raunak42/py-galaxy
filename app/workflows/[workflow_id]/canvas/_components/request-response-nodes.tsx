@@ -17,6 +17,7 @@ export function RequestInputsNode({ id: nodeId, data }: { id: string; data?: Rec
       ];
   const [fields, setFields] = useState(initialFields);
   const { setEdges } = useReactFlow();
+  const { values } = useNodeValueContext();
   const { recordSnapshot } = useWorkflowEditContext();
 
   const renameField = useCallback((fieldId: string, currentLabel: string) => {
@@ -72,7 +73,7 @@ export function RequestInputsNode({ id: nodeId, data }: { id: string; data?: Rec
             if (f.type === "number_field") return <RequestNumberField key={f.id} nodeId={nodeId} id={f.id} label={f.label} {...fieldActions} />;
             if (f.type === "boolean_field") return <RequestBooleanField key={f.id} nodeId={nodeId} id={f.id} label={f.label} {...fieldActions} />;
             if (f.type === "image_field" || f.type === "audio_field" || f.type === "video_field" || f.type === "media_field" || f.type === "file_field") {
-              return <RequestUploadField key={f.id} nodeId={nodeId} id={f.id} label={f.label} type={f.type} {...fieldActions} />;
+              return <RequestUploadField key={f.id} nodeId={nodeId} id={f.id} label={f.label} type={f.type} value={typeof values[nodeId]?.[f.id] === "string" ? values[nodeId]?.[f.id] as string : f.value ?? ""} {...fieldActions} />;
             }
             return <RequestTextField key={f.id} nodeId={nodeId} id={f.id} label={f.label} value={f.value ?? ""} {...fieldActions} />;
           })}

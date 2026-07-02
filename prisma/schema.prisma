@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum WorkflowStatus {
+  DRAFT
+  READY
+  RUNNING
+}
+
+enum WorkflowRunStatus {
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+enum WorkflowRunScope {
+  FULL
+  PARTIAL
+  SINGLE
+}
+
+model User {
+  id        String   @id @default(cuid())
+  clerkId   String?  @unique
+  email     String?  @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workflows Workflow[]
+  runs      WorkflowRun[]
+}
+
+model Workflow {
+  id         String         @id @default(cuid())
+  ownerId    String
+  owner      User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name       String
+  status     WorkflowStatus @default(DRAFT)
+  nodes      Json
+  edges      Json
+  nodeValues Json?
+  viewport   Json?
+  undoStack  Json?
+  redoStack  Json?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  deletedAt  DateTime?
+
+  runs WorkflowRun[]
+
+  @@index([ownerId, updatedAt])
+  @@index([ownerId, deletedAt])
+}
+
+model WorkflowRun {
+  id          String            @id @default(cuid())
+  workflowId  String
+  workflow    Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  ownerId     String
+  owner       User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  scope       WorkflowRunScope
+  status      WorkflowRunStatus
+  durationMs  Int
+  nodeDetails Json
+  createdAt   DateTime          @default(now())
+
+  @@index([workflowId, createdAt])
+  @@index([ownerId, createdAt])
+}

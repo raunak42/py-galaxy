@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useViewport } from "@xyflow/react";
-import { Plus, GripVertical, Pencil, Copy, Trash2, X, Maximize2, Image, Check, AlignLeft, Hash, Music, Video, File } from "lucide-react";
+import { Plus, GripVertical, Pencil, Copy, Trash2, X, Maximize2, Image, Check, AlignLeft, Hash, Music, Video, File, Loader2 } from "lucide-react";
 import { IconUpload } from "@tabler/icons-react";
 import { toast } from "@/lib/toast";
 import { HANDLE_COLORS } from "../_lib/constants";
@@ -194,10 +194,10 @@ export function readFileAsDataUrl(file: File) {
   });
 }
 
-export function RequestUploadField({ nodeId, id, label, type, onRename, onDelete }: { nodeId: string; id: string; label: string; type: string; onRename?: () => void; onDelete?: () => void }) {
+export function RequestUploadField({ nodeId, id, label, type, value = "", onRename, onDelete }: { nodeId: string; id: string; label: string; type: string; value?: string; onRename?: () => void; onDelete?: () => void }) {
   const [uploadPopoverOpen, setUploadPopoverOpen] = useState(false);
   const [assetModalOpen, setAssetModalOpen] = useState(false);
-  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(value || null);
   const [uploading, setUploading] = useState(false);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
   const uploadLabel = uploadLabelForFieldType(type)!;
@@ -233,8 +233,9 @@ export function RequestUploadField({ nodeId, id, label, type, onRename, onDelete
             <div className="min-w-0">
               <div className="relative">
                 {uploading ? (
-                  <div className="flex items-center justify-center rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-xs text-gray-500">
-                    Uploading to Transloadit…
+                  <div className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-[#F5F5F5] px-3 py-2 text-xs text-gray-500">
+                    <Loader2 size={14} strokeWidth={2} className="h-3.5 w-3.5 animate-spin text-gray-600" />
+                    <span>Uploading to Transloadit…</span>
                   </div>
                 ) : uploadedUrl ? (
                   type === "image_field" ? (
