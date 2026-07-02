@@ -52,43 +52,15 @@ function serializeWorkflow(workflow: {
 }
 
 async function findWorkflowForOwner(workflowId: string, ownerId: string) {
-  const existing = await prisma.workflow.findFirst({
-    where: { id: workflowId, ownerId, deletedAt: null },
-  });
-  if (existing) return existing;
-
-  if (workflowId !== "trial-task-workflow") return null;
-
   return prisma.workflow.findFirst({
-    where: { ownerId, name: "Trial Task Workflow", deletedAt: null },
-  });
-}
-
-async function findOrCreateWorkflow(workflowId: string, ownerId: string) {
-  const existing = await findWorkflowForOwner(workflowId, ownerId);
-  if (existing) return existing;
-
-  if (workflowId !== "trial-task-workflow") return null;
-
-  return prisma.workflow.create({
-    data: {
-      ownerId,
-      name: "Trial Task Workflow",
-      status: "READY",
-      nodes: toJson(initialNodes),
-      edges: toJson(initialEdges),
-      nodeValues: toJson({}),
-      viewport: toJson({ x: 0, y: 0, zoom: 0.5 }),
-      undoStack: toJson([]),
-      redoStack: toJson([]),
-    },
+    where: { id: workflowId, ownerId, deletedAt: null },
   });
 }
 
 export async function GET(_request: Request, { params }: { params: Promise<{ workflowId: string }> }) {
   const user = await getCurrentUser();
   const { workflowId } = await params;
-  const workflow = await findOrCreateWorkflow(workflowId, user.id);
+  const workflow = await findWorkflowForOwner(workflowId, user.id);
 
   if (!workflow) return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
 

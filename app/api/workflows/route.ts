@@ -8,6 +8,9 @@ import { initialEdges, initialNodes } from "@/app/workflows/[workflow_id]/canvas
 const createWorkflowSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   sourceWorkflowId: z.string().trim().min(1).optional(),
+  nodes: z.array(z.record(z.string(), z.unknown())).optional(),
+  edges: z.array(z.record(z.string(), z.unknown())).optional(),
+  nodeValues: z.record(z.string(), z.unknown()).optional(),
 });
 
 function toJson(value: unknown): Prisma.InputJsonValue {
@@ -69,14 +72,35 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Source workflow not found" }, { status: 404 });
   }
 
+  const templateNamePattern = "Trial Task Workflow Copy";
+  const rawName = parsed.data.name ?? (source ? `${source.name} Copy` : "Untitled Workflow");
+  let finalName = rawName;
+
+  if (rawName.startsWith("Trial Task Workflow Copy")) {
+    const existing = await prisma.workflow.findMany({
+      where: { ownerId: user.id, name: { startsWith: templateNamePattern }, deletedAt: null },
+      select: { name: true },
+    });
+    const existingNames = new Set(existing.map((w) => w.name));
+    if (!existingNames.has("Trial Task Workflow Copy")) {
+      finalName = "Trial Task Workflow Copy";
+    } else {
+      let idx = 1;
+      while (existingNames.has(`Trial Task Workflow Copy ${idx}`)) {
+        idx++;
+      }
+      finalName = `Trial Task Workflow Copy ${idx}`;
+    }
+  }
+
   const workflow = await prisma.workflow.create({
     data: {
       ownerId: user.id,
-      name: parsed.data.name ?? (source ? `${source.name} Copy` : "Untitled Workflow"),
+      name: finalName,
       status: "DRAFT",
-      nodes: toJson(source?.nodes ?? initialNodes),
-      edges: toJson(source?.edges ?? initialEdges),
-      nodeValues: toJson(source?.nodeValues ?? {}),
+      nodes: toJson(source?.nodes ?? parsed.data.nodes ?? initialNodes),
+      edges: toJson(source?.edges ?? parsed.data.edges ?? initialEdges),
+      nodeValues: toJson(source?.nodeValues ?? parsed.data.nodeValues ?? {}),
       viewport: toJson(source?.viewport ?? { x: 0, y: 0, zoom: 0.5 }),
       undoStack: toJson([]),
       redoStack: toJson([]),
