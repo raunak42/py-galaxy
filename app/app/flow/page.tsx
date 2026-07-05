@@ -20,6 +20,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { toast, Toaster } from "@/lib/toast";
 import { Sidebar } from "@/app/workflows/[workflow_id]/canvas/_components/sidebar";
 import { sampleWorkflowNodes, sampleWorkflowEdges } from "@/app/workflows/[workflow_id]/canvas/_lib/initial-workflow";
+import { normalizeWorkflowAssetUrl, TRIAL_WORKFLOW_IMAGE_SRC } from "@/app/workflows/[workflow_id]/canvas/_lib/assets";
 
 type WorkflowListItem = {
   id: string;
@@ -61,18 +62,18 @@ function workflowHref(id: string) {
 
 function getWorkflowCoverImage(workflow: WorkflowListItem) {
   const nodeValues = workflow.nodeValues as Record<string, unknown> | undefined;
-  if (typeof nodeValues?.__cover__ === "string" && nodeValues.__cover__) return nodeValues.__cover__;
+  if (typeof nodeValues?.__cover__ === "string" && nodeValues.__cover__) return normalizeWorkflowAssetUrl(nodeValues.__cover__);
 
   const nodeValueImage = typeof (nodeValues as Record<string, Record<string, unknown>> | undefined)?.["request-inputs"]?.image_field === "string"
     ? (nodeValues as Record<string, Record<string, string>>)["request-inputs"].image_field
     : "";
-  if (nodeValueImage) return nodeValueImage;
+  if (nodeValueImage) return normalizeWorkflowAssetUrl(nodeValueImage);
 
   const requestNode = Array.isArray(workflow.nodes)
     ? workflow.nodes.find((node): node is { data?: { fields?: Array<{ id?: string; value?: unknown }> } } => typeof node === "object" && node !== null && "data" in node)
     : undefined;
   const imageField = requestNode?.data?.fields?.find((field) => field.id === "image_field");
-  return typeof imageField?.value === "string" ? imageField.value : "";
+  return typeof imageField?.value === "string" ? normalizeWorkflowAssetUrl(imageField.value) : "";
 }
 
 function downloadJson(filename: string, data: unknown) {
@@ -88,8 +89,11 @@ function downloadJson(filename: string, data: unknown) {
 }
 
 function WorkflowPreview({ large = false, coverUrl = "" }: { large?: boolean; coverUrl?: string }) {
-  if (coverUrl) {
-    return <img src={coverUrl} alt="Workflow cover" className="h-full w-full object-cover" />;
+  const [failedCoverUrl, setFailedCoverUrl] = useState<string | null>(null);
+  const visibleCoverUrl = coverUrl && coverUrl !== failedCoverUrl ? coverUrl : "";
+
+  if (visibleCoverUrl) {
+    return <img src={visibleCoverUrl} alt="Workflow cover" className="h-full w-full object-cover" onError={() => setFailedCoverUrl(visibleCoverUrl)} />;
   }
 
   return (
@@ -282,7 +286,7 @@ export default function FlowPage() {
     const img = new Image();
     img.onload = () => setImageLoading(false);
     img.onerror = () => setImageLoading(false);
-    img.src = "https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/0c89d91b6bb0447bae12f04a394a5c7a/3dec2c395e5343c2ac16621ba924929f/da26c20cafb648bda1a4a08bbceb6adb.jpg";
+    img.src = TRIAL_WORKFLOW_IMAGE_SRC;
     return () => { img.onload = null; img.onerror = null; };
   }, []);
 
@@ -495,7 +499,7 @@ export default function FlowPage() {
               <div className="mt-6 flex gap-4 overflow-x-auto scroll-smooth pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:gap-7">
                 <button type="button" onClick={() => setTrialPickerOpen(true)} className="group w-[75vw] flex-none overflow-hidden rounded-[16px] border-[0.5px] border-[#e0e0e2] bg-[#f4f4f4] text-left transition-colors hover:border-[#c9c9cd] sm:w-72 lg:w-80">
                   <div className="aspect-[320/217] w-full overflow-hidden">
-                    <WorkflowPreview large coverUrl="https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/0c89d91b6bb0447bae12f04a394a5c7a/3dec2c395e5343c2ac16621ba924929f/da26c20cafb648bda1a4a08bbceb6adb.jpg" />
+                    <WorkflowPreview large coverUrl={TRIAL_WORKFLOW_IMAGE_SRC} />
                   </div>
                   <div className="px-3 py-2.5 text-sm font-medium leading-5 text-[#1b1b18] sm:px-4 sm:py-3">Trial Task Workflow</div>
                 </button>

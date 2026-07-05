@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { configure, runs, tasks } from "@trigger.dev/sdk";
 import { z } from "zod";
+import { toAbsoluteWorkflowAssetUrl } from "@/app/workflows/[workflow_id]/canvas/_lib/assets";
 import type { runGeminiTask } from "@/trigger/gemini";
 
 export const runtime = "nodejs";
@@ -42,9 +43,17 @@ export async function POST(request: Request) {
   try {
     configureTriggerForVercelProduction();
 
+    const payload = {
+      ...parsed.data,
+      imageUrls: parsed.data.imageUrls.map((url) => toAbsoluteWorkflowAssetUrl(url, request.url)),
+      videoUrls: parsed.data.videoUrls.map((url) => toAbsoluteWorkflowAssetUrl(url, request.url)),
+      audioUrls: parsed.data.audioUrls.map((url) => toAbsoluteWorkflowAssetUrl(url, request.url)),
+      fileUrls: parsed.data.fileUrls.map((url) => toAbsoluteWorkflowAssetUrl(url, request.url)),
+    };
+
     // triggerAndWait is only legal inside task.run(). From a Next route we trigger
     // the task, then poll Trigger.dev for completion.
-    const handle = await tasks.trigger<typeof runGeminiTask>("py-gemini-3-1-pro", parsed.data);
+    const handle = await tasks.trigger<typeof runGeminiTask>("py-gemini-3-1-pro", payload);
     const run = await runs.poll<typeof runGeminiTask>(handle.id, { pollIntervalMs: 1000 });
 
     if (!run.isSuccess || !run.output) {

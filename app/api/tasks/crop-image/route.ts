@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { configure, runs, tasks } from "@trigger.dev/sdk";
 import { z } from "zod";
+import { toAbsoluteWorkflowAssetUrl } from "@/app/workflows/[workflow_id]/canvas/_lib/assets";
 import type { cropImageTask } from "@/trigger/crop-image";
 
 export const runtime = "nodejs";
@@ -34,9 +35,14 @@ export async function POST(request: Request) {
   try {
     configureTriggerForVercelProduction();
 
+    const payload = {
+      ...parsed.data,
+      inputImageUrl: toAbsoluteWorkflowAssetUrl(parsed.data.inputImageUrl, request.url),
+    };
+
     // triggerAndWait is only legal inside task.run(). From a Next route we trigger
     // the task, then poll Trigger.dev for completion.
-    const handle = await tasks.trigger<typeof cropImageTask>("py-crop-image", parsed.data);
+    const handle = await tasks.trigger<typeof cropImageTask>("py-crop-image", payload);
     const run = await runs.poll<typeof cropImageTask>(handle.id, { pollIntervalMs: 1000 });
 
     if (!run.isSuccess || !run.output) {

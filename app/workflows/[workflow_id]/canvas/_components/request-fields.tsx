@@ -5,6 +5,7 @@ import { useViewport } from "@xyflow/react";
 import { Plus, GripVertical, Pencil, Copy, Trash2, X, Maximize2, Image, Check, AlignLeft, Hash, Music, Video, File, Loader2 } from "lucide-react";
 import { IconUpload } from "@tabler/icons-react";
 import { toast } from "@/lib/toast";
+import { normalizeWorkflowAssetUrl } from "../_lib/assets";
 import { HANDLE_COLORS } from "../_lib/constants";
 import { useNodeValueContext, useWorkflowEditContext } from "../_lib/contexts";
 import { SourceFieldHandle } from "./edges";
@@ -250,7 +251,8 @@ export function RequestUploadField({ nodeId, id, label, type, value = "", onRena
   const { values, setNodeHandleValue } = useNodeValueContext();
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(() => {
     const stored = values[nodeId]?.[id];
-    return typeof stored === "string" && stored ? stored : (value || null);
+    const initialValue = typeof stored === "string" && stored ? stored : value;
+    return initialValue ? normalizeWorkflowAssetUrl(initialValue) : null;
   });
   const [uploading, setUploading] = useState(false);
   const uploadButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -260,8 +262,10 @@ export function RequestUploadField({ nodeId, id, label, type, value = "", onRena
 
   useEffect(() => {
     const stored = values[nodeId]?.[id];
-    if (typeof stored === "string" && stored && stored !== uploadedUrl) {
-      setUploadedUrl(stored);
+    if (stored === undefined) return;
+    const normalizedStored = typeof stored === "string" ? normalizeWorkflowAssetUrl(stored) : "";
+    if (normalizedStored !== (uploadedUrl ?? "")) {
+      setUploadedUrl(normalizedStored || null);
     }
   }, [id, nodeId, uploadedUrl, values]);
 
@@ -286,6 +290,12 @@ export function RequestUploadField({ nodeId, id, label, type, value = "", onRena
     }
   }, [recordSnapshot, type]);
 
+  const handleClearUpload = useCallback(() => {
+    recordSnapshot();
+    setUploadedUrl(null);
+    setNodeHandleValue(nodeId, id, "");
+  }, [id, nodeId, recordSnapshot, setNodeHandleValue]);
+
   return (
     <div className="relative w-full" style={{ overflow: "visible" }}>
       <div className="w-full min-w-0">
@@ -305,10 +315,8 @@ export function RequestUploadField({ nodeId, id, label, type, value = "", onRena
                       <img src={uploadedUrl} alt="Uploaded preview" className="h-24 w-24 rounded-lg border border-gray-200 object-cover" />
                       <button
                         type="button"
-                        onClick={() => {
-                          setUploadedUrl(null);
-                        }}
-                        className="nodrag absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
+                        onClick={handleClearUpload}
+                        className="nodrag absolute right-2 top-2 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70"
                       >
                         <X size={12} strokeWidth={2} className="h-3 w-3" />
                       </button>

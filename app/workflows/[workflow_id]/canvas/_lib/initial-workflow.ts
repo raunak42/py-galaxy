@@ -1,4 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
+import { TRIAL_WORKFLOW_IMAGE_SRC } from "./assets";
 import { HANDLE_COLORS } from "./constants";
 
 export const initialNodes: Node[] = [
@@ -47,7 +48,7 @@ export const sampleWorkflowNodes: Node[] = [
           type: "image_field",
           id: "image_field",
           label: "image_field",
-          value: "https://pub-e8fef8c0e03b44acb340577811800829.r2.dev/0c89d91b6bb0447bae12f04a394a5c7a/3dec2c395e5343c2ac16621ba924929f/da26c20cafb648bda1a4a08bbceb6adb.jpg",
+          value: TRIAL_WORKFLOW_IMAGE_SRC,
         },
       ],
     },

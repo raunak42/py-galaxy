@@ -23,7 +23,7 @@ export function valueToStringArray(value: unknown): string[] {
 }
 
 export function isImageUrl(value: string) {
-  return value.startsWith("data:image/") || /^https?:\/\//i.test(value) && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value);
+  return value.startsWith("data:image/") || /^(https?:\/\/|\/)\S+\.(png|jpe?g|webp|gif)(\?|$)/i.test(value);
 }
 
 export function nodeHistoryLabel(node: Node) {
