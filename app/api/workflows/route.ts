@@ -46,13 +46,21 @@ function serializeWorkflow(workflow: {
 }
 
 export async function GET() {
-  const user = await getCurrentUser();
-  const workflows = await prisma.workflow.findMany({
-    where: { ownerId: user.id, deletedAt: null },
-    orderBy: { updatedAt: "desc" },
-  });
+  try {
+    const user = await getCurrentUser();
+    const workflows = await prisma.workflow.findMany({
+      where: { ownerId: user.id, deletedAt: null },
+      orderBy: { updatedAt: "desc" },
+    });
 
-  return NextResponse.json({ workflows: workflows.map(serializeWorkflow) });
+    return NextResponse.json({ workflows: workflows.map(serializeWorkflow) });
+  } catch (error) {
+    console.error("Failed to load workflows", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to load workflows" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: Request) {

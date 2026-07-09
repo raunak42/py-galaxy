@@ -541,6 +541,7 @@ export default function WorkflowCanvasPage() {
     setSelectionBoxNodeIds,
     markWorkflowDirty,
     workflowId,
+    historyEntries,
     setHistoryEntries,
   });
 

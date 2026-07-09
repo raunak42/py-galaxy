@@ -26,6 +26,7 @@ type UseWorkflowRunnerParams = {
   setSelectionBoxNodeIds: Dispatch<SetStateAction<Set<string>>>;
   markWorkflowDirty: () => void;
   workflowId: string;
+  historyEntries: HistoryRunEntry[];
   setHistoryEntries: Dispatch<SetStateAction<HistoryRunEntry[]>>;
 };
 export function useWorkflowRunner({
@@ -43,6 +44,7 @@ export function useWorkflowRunner({
   setSelectionBoxNodeIds,
   markWorkflowDirty,
   workflowId,
+  historyEntries,
   setHistoryEntries,
 }: UseWorkflowRunnerParams) {
   const runCancelTokenRef = useRef(0);
@@ -467,11 +469,24 @@ export function useWorkflowRunner({
     runCancelTokenRef.current += 1;
     resolveActiveRunRef.current?.();
     resolveActiveRunRef.current = null;
+    const runningRun = historyEntries.find((entry) => entry.status === "running");
+    if (runningRun) {
+      const durationMs = Date.now() - runningRun.timestamp;
+      const nodeDetails = runningRun.nodeDetails.length > 0
+        ? runningRun.nodeDetails
+        : [{ nodeId: "workflow", label: "Workflow execution", status: "failed" as const, durationMs, error: "Run canceled by user" }];
+      setHistoryEntries((current) => current.map((entry) => entry.id === runningRun.id ? { ...entry, status: "failed", durationMs, nodeDetails } : entry));
+      void fetch(`/api/workflows/${workflowId}/history`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: runningRun.id, status: "failed", durationMs, nodeDetails }),
+      }).catch(() => undefined);
+    }
     setRunningNodeIds(new Set());
     setPendingNodeIds(new Set());
     setWorkflowRunning(false);
     toast({ description: "Workflow run canceled" });
-  }, [setPendingNodeIds, setRunningNodeIds, setWorkflowRunning]);
+  }, [historyEntries, setHistoryEntries, setPendingNodeIds, setRunningNodeIds, setWorkflowRunning, workflowId]);
   const runWorkflow = useCallback(async () => {
     await runExecutableScope(null, "full");
   }, [runExecutableScope]);

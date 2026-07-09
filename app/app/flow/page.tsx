@@ -88,6 +88,10 @@ function downloadJson(filename: string, data: unknown) {
   URL.revokeObjectURL(url);
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function WorkflowStatusBadge({ status, compact = false }: { status: WorkflowListItem["status"]; compact?: boolean }) {
   const label = status === "RUNNING" ? "Running" : status === "READY" ? "Workflow completed" : "Draft";
   const classes = status === "RUNNING"
@@ -284,11 +288,21 @@ export default function FlowPage() {
 
   const loadWorkflows = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
     if (!background) setLoading(true);
+    let lastError: unknown;
     try {
-      const response = await fetch("/api/workflows", { cache: "no-store" });
-      const json = await readJsonResponse<{ workflows?: WorkflowListItem[]; error?: string }>(response);
-      if (!response.ok) throw new Error(json.error ?? "Failed to load workflows");
-      setWorkflows(json.workflows ?? []);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const response = await fetch("/api/workflows", { cache: "no-store" });
+          const json = await readJsonResponse<{ workflows?: WorkflowListItem[]; error?: string }>(response);
+          if (!response.ok) throw new Error(json.error ?? `Failed to load workflows (${response.status})`);
+          setWorkflows(json.workflows ?? []);
+          return;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 2) await wait(500 * (attempt + 1));
+        }
+      }
+      throw lastError;
     } catch (error) {
       if (!background) toast({ description: error instanceof Error ? error.message : "Failed to load workflows" });
     } finally {

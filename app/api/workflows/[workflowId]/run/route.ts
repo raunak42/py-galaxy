@@ -55,6 +55,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
   const workflow = await prisma.workflow.findFirst({ where: { id: workflowId, ownerId: user.id, deletedAt: null } });
   if (!workflow) return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
 
+  let createdRunId: string | null = null;
+
   try {
     configureTriggerForVercelProduction();
 
@@ -83,6 +85,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
       return createdRun;
     });
 
+    createdRunId = run.id;
+
     await tasks.trigger<typeof runWorkflowTask>("py-run-workflow", {
       runId: run.id,
       workflowId: workflow.id,
@@ -101,7 +105,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
 
     return NextResponse.json({ run: fromDbRun(run) }, { status: 202 });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to start workflow run";
+    if (createdRunId) {
+      await prisma.workflowRun.update({
+        where: { id: createdRunId },
+        data: {
+          status: "FAILED",
+          durationMs: 0,
+          nodeDetails: toJson([{ nodeId: "workflow", label: "Workflow execution", status: "failed", durationMs: 0, error: message }]),
+        },
+      }).catch(() => undefined);
+    }
     await prisma.workflow.update({ where: { id: workflow.id }, data: { status: "DRAFT" } }).catch(() => undefined);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to start workflow run" }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

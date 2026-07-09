@@ -4,12 +4,21 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/current-user";
 
+const runStatusSchema = z.enum(["running", "success", "failed", "partial"]);
+
 const createRunSchema = z.object({
   scope: z.enum(["full", "partial", "single"]),
-  status: z.enum(["running", "success", "failed", "partial"]),
+  status: runStatusSchema,
   durationMs: z.number().int().min(0),
   nodeDetails: z.array(z.unknown()),
   timestamp: z.number().int().optional(),
+});
+
+const updateRunSchema = z.object({
+  runId: z.string().min(1),
+  status: runStatusSchema,
+  durationMs: z.number().int().min(0).optional(),
+  nodeDetails: z.array(z.unknown()).optional(),
 });
 
 function toJson(value: unknown): Prisma.InputJsonValue {
@@ -63,6 +72,41 @@ export async function GET(_request: Request, { params }: { params: Promise<{ wor
   });
 
   return NextResponse.json({ runs: runs.map(fromDbRun) });
+}
+
+export async function PATCH(request: Request, { params }: { params: Promise<{ workflowId: string }> }) {
+  const user = await getCurrentUser();
+  const { workflowId } = await params;
+  const json = await request.json().catch(() => ({}));
+  const parsed = updateRunSchema.safeParse(json);
+
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid run update payload", details: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const workflow = await findWorkflowForOwner(workflowId, user.id);
+  if (!workflow) return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
+
+  const existingRun = await prisma.workflowRun.findFirst({
+    where: { id: parsed.data.runId, workflowId: workflow.id, ownerId: user.id },
+  });
+  if (!existingRun) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+
+  const run = await prisma.workflowRun.update({
+    where: { id: existingRun.id },
+    data: {
+      status: toDbStatus(parsed.data.status),
+      durationMs: parsed.data.durationMs ?? existingRun.durationMs,
+      nodeDetails: parsed.data.nodeDetails === undefined ? existingRun.nodeDetails as Prisma.InputJsonValue : toJson(parsed.data.nodeDetails),
+    },
+  });
+
+  await prisma.workflow.update({
+    where: { id: workflow.id },
+    data: { status: parsed.data.status === "running" ? "RUNNING" : parsed.data.status === "failed" ? "DRAFT" : "READY" },
+  });
+
+  return NextResponse.json({ run: fromDbRun(run) });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ workflowId: string }> }) {
