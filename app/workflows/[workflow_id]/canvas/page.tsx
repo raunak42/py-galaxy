@@ -33,6 +33,8 @@ import { WorkflowHistorySidebar } from "./_components/history-sidebar";
 import { AutoSaveIndicator, SelectionRunOverlay, TopRightCanvasControls, BottomRightCanvasControls, type AutoSaveStatus } from "./_components/canvas-controls";
 import { useWorkflowRunner } from "./_hooks/use-workflow-runner";
 
+const RUN_START_GRACE_MS = 20_000;
+
 function sanitizeNodeForPersistence(node: Node) {
   const clean = { ...node } as Record<string, unknown>;
   delete clean.selected;
@@ -550,6 +552,26 @@ export default function WorkflowCanvasPage() {
     const runningRun = historyEntries.find((entry) => entry.status === "running");
     if (!runningRun) return;
     const executableIds = new Set(latestNodesRef.current.filter((node) => node.type === "geminiPreview" || node.type === "cropImage").map((node) => node.id));
+    const failStaleRun = async (entry: HistoryRunEntry) => {
+      const durationMs = Date.now() - entry.timestamp;
+      const nodeDetails = [{
+        nodeId: "workflow-start",
+        label: "Workflow execution",
+        status: "failed" as const,
+        durationMs,
+        error: "Workflow execution did not start in Trigger.dev. Please redeploy Trigger tasks and retry.",
+      }];
+      setHistoryEntries((current) => current.map((item) => item.id === entry.id ? { ...item, status: "failed", durationMs, nodeDetails } : item));
+      setWorkflowRunning(false);
+      setRunningNodeIds(new Set());
+      setPendingNodeIds(new Set());
+      await fetch(`/api/workflows/${workflowId}/history`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: entry.id, status: "failed", durationMs, nodeDetails }),
+      }).catch(() => undefined);
+      toast({ description: "Workflow execution did not start in Trigger.dev. Please redeploy Trigger tasks and retry." });
+    };
     const syncRunNodeStates = (entry: HistoryRunEntry) => {
       const completedIds = new Set(entry.nodeDetails.map((detail) => detail.nodeId));
       const remainingIds = new Set([...executableIds].filter((id) => !completedIds.has(id)));
@@ -564,6 +586,10 @@ export default function WorkflowCanvasPage() {
     };
     setWorkflowRunning(true);
     syncRunNodeStates(runningRun);
+    if (runningRun.nodeDetails.length === 0 && Date.now() - runningRun.timestamp > RUN_START_GRACE_MS) {
+      void failStaleRun(runningRun);
+      return;
+    }
     if (backgroundRunNoticeRef.current !== runningRun.id) {
       backgroundRunNoticeRef.current = runningRun.id;
       toast({ description: "Workflow execution is continuing in the background. You can refresh safely; this page will reconnect to the run." });
@@ -585,7 +611,11 @@ export default function WorkflowCanvasPage() {
         setHistoryEntries(runs);
         if (workflowJson.workflow?.nodeValues) setNodeValues(workflowJson.workflow.nodeValues);
         const currentRun = runs.find((entry) => entry.id === runningRun.id);
-        if (currentRun?.status === "running") {
+        if (currentRun?.status === "running" && currentRun.nodeDetails.length === 0 && Date.now() - currentRun.timestamp > RUN_START_GRACE_MS) {
+          stopped = true;
+          window.clearInterval(interval);
+          void failStaleRun(currentRun);
+        } else if (currentRun?.status === "running") {
           syncRunNodeStates(currentRun);
         } else if (currentRun) {
           setWorkflowRunning(false);

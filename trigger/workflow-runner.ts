@@ -237,6 +237,13 @@ export const runWorkflowTask = task({
 
     try {
       if (executable.length === 0) throw new Error("Select at least one executable node");
+      nodeDetails.push({
+        nodeId: "workflow-start",
+        label: "Workflow execution started",
+        status: "success",
+        durationMs: 0,
+        output: "Trigger.dev orchestrator started",
+      });
       await persistProgress("RUNNING");
 
       await new Promise<void>((resolve, reject) => {
