@@ -469,18 +469,23 @@ export function useWorkflowRunner({
     runCancelTokenRef.current += 1;
     resolveActiveRunRef.current?.();
     resolveActiveRunRef.current = null;
-    const runningRun = historyEntries.find((entry) => entry.status === "running");
-    if (runningRun) {
-      const durationMs = Date.now() - runningRun.timestamp;
-      const nodeDetails = runningRun.nodeDetails.length > 0
-        ? runningRun.nodeDetails
-        : [{ nodeId: "workflow", label: "Workflow execution", status: "failed" as const, durationMs, error: "Run canceled by user" }];
-      setHistoryEntries((current) => current.map((entry) => entry.id === runningRun.id ? { ...entry, status: "failed", durationMs, nodeDetails } : entry));
-      void fetch(`/api/workflows/${workflowId}/history`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ runId: runningRun.id, status: "failed", durationMs, nodeDetails }),
-      }).catch(() => undefined);
+    const runningRuns = historyEntries.filter((entry) => entry.status === "running");
+    if (runningRuns.length > 0) {
+      const canceledRuns = runningRuns.map((runningRun) => {
+        const durationMs = Date.now() - runningRun.timestamp;
+        const nodeDetails = [{ nodeId: "workflow", label: "Workflow execution", status: "failed" as const, durationMs, error: "Run canceled by user" }];
+        return { ...runningRun, status: "failed" as const, durationMs, nodeDetails };
+      });
+      const canceledById = new Map(canceledRuns.map((entry) => [entry.id, entry]));
+      setHistoryEntries((current) => current.map((entry) => canceledById.get(entry.id) ?? entry));
+      for (const canceledRun of canceledRuns) {
+        void fetch(`/api/workflows/${workflowId}/history`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runId: canceledRun.id, status: "failed", durationMs: canceledRun.durationMs, nodeDetails: canceledRun.nodeDetails }),
+          keepalive: true,
+        }).catch(() => undefined);
+      }
     }
     setRunningNodeIds(new Set());
     setPendingNodeIds(new Set());

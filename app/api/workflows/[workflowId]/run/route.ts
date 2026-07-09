@@ -61,6 +61,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
     configureTriggerForVercelProduction();
 
     const run = await prisma.$transaction(async (tx) => {
+      await tx.workflowRun.updateMany({
+        where: { workflowId: workflow.id, ownerId: user.id, status: "RUNNING" },
+        data: {
+          status: "FAILED",
+          nodeDetails: toJson([{ nodeId: "workflow", label: "Workflow execution", status: "failed", durationMs: 0, error: "Run superseded by a newer run" }]),
+        },
+      });
+
       const createdRun = await tx.workflowRun.create({
         data: {
           workflowId: workflow.id,

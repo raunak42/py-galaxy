@@ -569,6 +569,7 @@ export default function WorkflowCanvasPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ runId: entry.id, status: "failed", durationMs, nodeDetails }),
+        keepalive: true,
       }).catch(() => undefined);
       toast({ description: "Workflow execution did not start in Trigger.dev. Please redeploy Trigger tasks and retry." });
     };

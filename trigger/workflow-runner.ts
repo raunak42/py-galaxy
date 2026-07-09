@@ -61,6 +61,13 @@ function isExecutable(node: WorkflowNode) {
   return node.type === "geminiPreview" || node.type === "cropImage";
 }
 
+class WorkflowRunCanceledError extends Error {
+  constructor() {
+    super("Workflow run was canceled");
+    this.name = "WorkflowRunCanceledError";
+  }
+}
+
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
 }
@@ -76,8 +83,9 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
   });
 }
 
-async function waitForRunOutput<TOutput>(runId: string, label: string): Promise<TOutput> {
+async function waitForRunOutput<TOutput>(runId: string, label: string, ensureParentActive: () => Promise<void>): Promise<TOutput> {
   while (true) {
+    await ensureParentActive();
     const run = await runs.retrieve(runId) as { status: string; output?: TOutput; error?: unknown; isSuccess?: boolean; isFailed?: boolean; isCancelled?: boolean };
     if (run.isSuccess || run.status === "COMPLETED") return run.output as TOutput;
     if (run.isFailed || run.isCancelled || ["FAILED", "CRASHED", "SYSTEM_FAILURE", "CANCELED", "EXPIRED", "TIMED_OUT"].includes(run.status)) {
@@ -104,15 +112,32 @@ export const runWorkflowTask = task({
     const nodeDetails: HistoryNodeDetail[] = [];
     const runStartedAt = Date.now();
 
+    const isRunActive = async () => {
+      const run = await prisma.workflowRun.findUnique({ where: { id: payload.runId }, select: { status: true } });
+      return run?.status === "RUNNING";
+    };
+
+    const ensureRunActive = async () => {
+      if (!(await isRunActive())) throw new WorkflowRunCanceledError();
+    };
+
+    const setWorkflowStatusIfNoOtherRun = async (status: "DRAFT" | "READY") => {
+      const runningRuns = await prisma.workflowRun.count({ where: { workflowId: payload.workflowId, status: "RUNNING" } });
+      if (runningRuns === 0) {
+        await prisma.workflow.update({ where: { id: payload.workflowId }, data: { status } });
+      }
+    };
+
     const persistProgress = async (status: "RUNNING" | "SUCCESS" | "FAILED" | "PARTIAL" = "RUNNING") => {
-      await prisma.workflowRun.update({
-        where: { id: payload.runId },
+      const result = await prisma.workflowRun.updateMany({
+        where: { id: payload.runId, status: "RUNNING" },
         data: {
           status,
           durationMs: Date.now() - runStartedAt,
           nodeDetails: toJson(nodeDetails),
         },
       });
+      if (result.count === 0) throw new WorkflowRunCanceledError();
     };
 
     for (const node of nodes) {
@@ -217,13 +242,15 @@ export const runWorkflowTask = task({
       const inputs = buildExecutableInputs(node);
       if (node.type === "geminiPreview") {
         if (!String(inputs.prompt ?? "").trim()) throw new Error("Prompt is required");
+        await ensureRunActive();
         const handle = await tasks.trigger<typeof runGeminiTask>("py-gemini-3-1-pro", inputs as never, { ttl: "1h" });
-        const output = await withTimeout(waitForRunOutput<{ response?: string }>(handle.id, nodeHistoryLabel(node as never)), GEMINI_NODE_TIMEOUT_MS, nodeHistoryLabel(node as never));
+        const output = await withTimeout(waitForRunOutput<{ response?: string }>(handle.id, nodeHistoryLabel(node as never), ensureRunActive), GEMINI_NODE_TIMEOUT_MS, nodeHistoryLabel(node as never));
         return { response: output.response ?? "", result: output.response ?? "" };
       }
       if (!String(inputs.inputImageUrl ?? "").trim()) throw new Error("Input Image is required");
+      await ensureRunActive();
       const handle = await tasks.trigger<typeof cropImageTask>("py-crop-image", inputs as never, { ttl: "1h" });
-      const output = await withTimeout(waitForRunOutput<{ outputImageUrl?: string }>(handle.id, nodeHistoryLabel(node as never)), CROP_NODE_TIMEOUT_MS, nodeHistoryLabel(node as never));
+      const output = await withTimeout(waitForRunOutput<{ outputImageUrl?: string }>(handle.id, nodeHistoryLabel(node as never), ensureRunActive), CROP_NODE_TIMEOUT_MS, nodeHistoryLabel(node as never));
       return { "output-image": output.outputImageUrl ?? "", outputImageUrl: output.outputImageUrl ?? "" };
     };
 
@@ -237,6 +264,7 @@ export const runWorkflowTask = task({
 
     try {
       if (executable.length === 0) throw new Error("Select at least one executable node");
+      await ensureRunActive();
       nodeDetails.push({
         nodeId: "workflow-start",
         label: "Workflow execution started",
@@ -272,6 +300,7 @@ export const runWorkflowTask = task({
               .then(async (values) => {
                 if (settled) return;
                 running.delete(node.id);
+                await ensureRunActive();
                 outputs[node.id] = { ...(outputs[node.id] ?? {}), ...values };
                 completed.add(node.id);
                 nodeDetails.push({ nodeId: node.id, label: nodeHistoryLabel(node as never), status: "success", durationMs: Date.now() - nodeStartedAt, inputs: buildExecutableInputs(node), output: values });
@@ -282,6 +311,10 @@ export const runWorkflowTask = task({
               .catch(async (error: unknown) => {
                 if (settled) return;
                 running.delete(node.id);
+                if (error instanceof WorkflowRunCanceledError) {
+                  fail(error);
+                  return;
+                }
                 const message = error instanceof Error ? error.message : "Node run failed";
                 nodeDetails.push({ nodeId: node.id, label: nodeHistoryLabel(node as never), status: "failed", durationMs: Date.now() - nodeStartedAt, inputs: buildExecutableInputs(node), error: message });
                 await persistProgress("FAILED").catch(() => undefined);
@@ -293,19 +326,24 @@ export const runWorkflowTask = task({
       });
 
       const finalDetails = composeHistoryDetails(true);
-      await prisma.workflowRun.update({
-        where: { id: payload.runId },
+      const finalRunUpdate = await prisma.workflowRun.updateMany({
+        where: { id: payload.runId, status: "RUNNING" },
         data: { status: "SUCCESS", durationMs: Date.now() - runStartedAt, nodeDetails: toJson(finalDetails) },
       });
+      if (finalRunUpdate.count === 0) throw new WorkflowRunCanceledError();
       await prisma.workflow.update({ where: { id: payload.workflowId }, data: { status: "READY", nodeValues: toJson(outputs) } });
       return { status: "success", durationMs: Date.now() - runStartedAt };
     } catch (error) {
       const finalDetails = composeHistoryDetails(false);
-      await prisma.workflowRun.update({
-        where: { id: payload.runId },
+      if (error instanceof WorkflowRunCanceledError) {
+        await setWorkflowStatusIfNoOtherRun("DRAFT").catch(() => undefined);
+        return { status: "canceled", durationMs: Date.now() - runStartedAt };
+      }
+      await prisma.workflowRun.updateMany({
+        where: { id: payload.runId, status: "RUNNING" },
         data: { status: "FAILED", durationMs: Date.now() - runStartedAt, nodeDetails: toJson(finalDetails.length ? finalDetails : nodeDetails) },
       }).catch(() => undefined);
-      await prisma.workflow.update({ where: { id: payload.workflowId }, data: { status: "DRAFT" } }).catch(() => undefined);
+      await setWorkflowStatusIfNoOtherRun("DRAFT").catch(() => undefined);
       throw error;
     }
   },

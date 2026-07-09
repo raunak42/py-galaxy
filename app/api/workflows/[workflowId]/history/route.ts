@@ -101,9 +101,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ wo
     },
   });
 
+  const remainingRunningRuns = parsed.data.status === "running"
+    ? 1
+    : await prisma.workflowRun.count({ where: { workflowId: workflow.id, ownerId: user.id, status: "RUNNING" } });
+
   await prisma.workflow.update({
     where: { id: workflow.id },
-    data: { status: parsed.data.status === "running" ? "RUNNING" : parsed.data.status === "failed" ? "DRAFT" : "READY" },
+    data: { status: remainingRunningRuns > 0 ? "RUNNING" : parsed.data.status === "failed" ? "DRAFT" : "READY" },
   });
 
   return NextResponse.json({ run: fromDbRun(run) });
