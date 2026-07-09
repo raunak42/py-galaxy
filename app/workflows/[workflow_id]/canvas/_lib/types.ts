@@ -18,7 +18,7 @@ export type HistoryNodeDetail = {
 export type HistoryRunEntry = {
   id: string;
   timestamp: number;
-  status: "success" | "failed" | "partial";
+  status: "running" | "success" | "failed" | "partial";
   durationMs: number;
   scope: "full" | "partial" | "single";
   nodeDetails: HistoryNodeDetail[];

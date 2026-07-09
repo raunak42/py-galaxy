@@ -21,12 +21,14 @@ export function WorkflowHistorySidebar() {
   const magicaStatus = (status: HistoryRunEntry["status"]) => {
     if (status === "success") return "Completed";
     if (status === "failed") return "Failed";
+    if (status === "running") return "Running";
     return "Partial";
   };
 
   const statusDotClass = (status: HistoryRunEntry["status"] | HistoryNodeDetail["status"]) => {
     if (status === "success") return "bg-emerald-500";
     if (status === "failed") return "bg-red-500";
+    if (status === "running") return "bg-blue-500 animate-pulse";
     return "bg-amber-500";
   };
 

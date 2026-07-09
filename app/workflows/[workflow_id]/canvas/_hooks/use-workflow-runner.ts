@@ -6,6 +6,11 @@ import { toast } from "@/lib/toast";
 import { initialNodes } from "../_lib/initial-workflow";
 import { displayConnectedValue, nodeHistoryLabel, valueToStringArray } from "../_lib/utils";
 import type { HistoryNodeDetail, HistoryRunEntry, NodeOutputValues } from "../_lib/types";
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
+}
+
 type UseWorkflowRunnerParams = {
   nodes: Node[];
   edges: Edge[];
@@ -20,6 +25,8 @@ type UseWorkflowRunnerParams = {
   addHistoryEntry: (entry: Omit<HistoryRunEntry, "id" | "timestamp">) => void;
   setSelectionBoxNodeIds: Dispatch<SetStateAction<Set<string>>>;
   markWorkflowDirty: () => void;
+  workflowId: string;
+  setHistoryEntries: Dispatch<SetStateAction<HistoryRunEntry[]>>;
 };
 export function useWorkflowRunner({
   nodes,
@@ -35,6 +42,8 @@ export function useWorkflowRunner({
   addHistoryEntry,
   setSelectionBoxNodeIds,
   markWorkflowDirty,
+  workflowId,
+  setHistoryEntries,
 }: UseWorkflowRunnerParams) {
   const runCancelTokenRef = useRef(0);
   const resolveActiveRunRef = useRef<(() => void) | null>(null);
@@ -258,6 +267,47 @@ export function useWorkflowRunner({
       setWorkflowRunning(false);
       return;
     }
+
+    try {
+      running.clear();
+      for (const node of executable) {
+        const directExecutableDeps = edges
+          .filter((edge) => edge.target === node.id && executableIds.has(edge.source))
+          .map((edge) => edge.source);
+        if (directExecutableDeps.length === 0) running.add(node.id);
+      }
+      syncRunningNodes();
+      const res = await fetch(`/api/workflows/${workflowId}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope,
+          selectedNodeIds: targetIds ? [...targetIds] : undefined,
+          nodes,
+          edges,
+          nodeValues: outputs,
+        }),
+      });
+      const json = await res.json() as { run?: HistoryRunEntry; error?: string };
+      if (!res.ok || !json.run) throw new Error(json.error ?? "Failed to start workflow run");
+      setHistoryEntries((current) => [json.run!, ...current.filter((entry) => entry.id !== json.run!.id)]);
+      toast({ description: "Workflow is running in the background. You can refresh this page and execution will continue." });
+      return;
+    } catch (error) {
+      const message = getErrorMessage(error, "Failed to start workflow run");
+      toast({ description: message });
+      addHistoryEntry({
+        scope,
+        status: "failed",
+        durationMs: Date.now() - runStartedAt,
+        nodeDetails: executable.map((node) => ({ nodeId: node.id, label: nodeHistoryLabel(node), status: "failed", durationMs: Date.now() - runStartedAt, error: message })),
+      });
+      running.clear();
+      setRunningNodeIds(new Set());
+      setPendingNodeIds(new Set());
+      setWorkflowRunning(false);
+      return;
+    }
     const validateExecutableNodeInputs = (node: Node) => {
       if (node.type === "geminiPreview") {
         const prompt = String(readEffective(node.id, "prompt", typeof node.data?.prompt === "string" ? node.data.prompt : ""));
@@ -378,7 +428,7 @@ export function useWorkflowRunner({
               .catch((error: unknown) => {
                 if (runCancelTokenRef.current !== runToken) return;
                 const durationMs = Date.now() - nodeStartedAt;
-                const message = error instanceof Error ? error.message : "Node run failed";
+                const message = getErrorMessage(error, "Node run failed");
                 running.delete(node.id);
                 nodeDetails.push({ nodeId: node.id, label: nodeHistoryLabel(node), status: "failed", durationMs, inputs: buildExecutableInputs(node), error: message });
                 syncRunningNodes();
@@ -395,7 +445,8 @@ export function useWorkflowRunner({
     } catch (error) {
       if (runCancelTokenRef.current === runToken) {
         addHistoryEntry({ scope, status: "failed", durationMs: Date.now() - runStartedAt, nodeDetails: composeHistoryDetails(false) });
-        toast({ description: error instanceof Error ? error.message : "Workflow run failed" });
+        const message = getErrorMessage(error, "Workflow run failed");
+        toast({ description: message });
         runCancelTokenRef.current += 1;
         running.clear();
         setRunningNodeIds(new Set());
@@ -411,7 +462,7 @@ export function useWorkflowRunner({
         setWorkflowRunning(false);
       }
     }
-  }, [addHistoryEntry, edges, markWorkflowDirty, nodeValues, nodes, setNodeValues, setNodes, setPendingNodeIds, setRunningNodeIds, setSelectionBoxNodeIds, setWorkflowRunning, workflowRunning]);
+  }, [addHistoryEntry, edges, markWorkflowDirty, nodeValues, nodes, setHistoryEntries, setNodeValues, setNodes, setPendingNodeIds, setRunningNodeIds, setSelectionBoxNodeIds, setWorkflowRunning, workflowId, workflowRunning]);
   const cancelWorkflow = useCallback(() => {
     runCancelTokenRef.current += 1;
     resolveActiveRunRef.current?.();

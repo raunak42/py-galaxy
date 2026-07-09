@@ -100,6 +100,7 @@ export default function WorkflowCanvasPage() {
   const [workflowDirtyRevision, setWorkflowDirtyRevision] = useState(0);
   const undoStackRef = useRef<UndoRedoEntry[]>([]);
   const redoStackRef = useRef<UndoRedoEntry[]>([]);
+  const backgroundRunNoticeRef = useRef<string | null>(null);
   const [editHistoryCounts, setEditHistoryCounts] = useState({ undo: 0, redo: 0 });
 
   useEffect(() => {
@@ -539,7 +540,70 @@ export default function WorkflowCanvasPage() {
     addHistoryEntry,
     setSelectionBoxNodeIds,
     markWorkflowDirty,
+    workflowId,
+    setHistoryEntries,
   });
+
+  useEffect(() => {
+    if (!workflowLoaded) return;
+    const runningRun = historyEntries.find((entry) => entry.status === "running");
+    if (!runningRun) return;
+    const executableIds = new Set(latestNodesRef.current.filter((node) => node.type === "geminiPreview" || node.type === "cropImage").map((node) => node.id));
+    const syncRunNodeStates = (entry: HistoryRunEntry) => {
+      const completedIds = new Set(entry.nodeDetails.map((detail) => detail.nodeId));
+      const remainingIds = new Set([...executableIds].filter((id) => !completedIds.has(id)));
+      const readyIds = new Set([...remainingIds].filter((id) => {
+        const directExecutableDeps = latestEdgesRef.current
+          .filter((edge) => edge.target === id && executableIds.has(edge.source))
+          .map((edge) => edge.source);
+        return directExecutableDeps.every((sourceId) => completedIds.has(sourceId));
+      }));
+      setRunningNodeIds(readyIds);
+      setPendingNodeIds(new Set([...remainingIds].filter((id) => !readyIds.has(id))));
+    };
+    setWorkflowRunning(true);
+    syncRunNodeStates(runningRun);
+    if (backgroundRunNoticeRef.current !== runningRun.id) {
+      backgroundRunNoticeRef.current = runningRun.id;
+      toast({ description: "Workflow execution is continuing in the background. You can refresh safely; this page will reconnect to the run." });
+    }
+
+    let stopped = false;
+    const refreshRun = async () => {
+      try {
+        const [historyResponse, workflowResponse] = await Promise.all([
+          fetch(`/api/workflows/${workflowId}/history`, { cache: "no-store" }),
+          fetch(`/api/workflows/${workflowId}`, { cache: "no-store" }),
+        ]);
+        const historyJson = await historyResponse.json() as { runs?: HistoryRunEntry[]; error?: string };
+        const workflowJson = await workflowResponse.json() as { workflow?: { nodeValues?: NodeOutputValues }; error?: string };
+        if (!historyResponse.ok) throw new Error(historyJson.error ?? "Failed to refresh run status");
+        if (!workflowResponse.ok) throw new Error(workflowJson.error ?? "Failed to refresh workflow outputs");
+        if (stopped) return;
+        const runs = historyJson.runs ?? [];
+        setHistoryEntries(runs);
+        if (workflowJson.workflow?.nodeValues) setNodeValues(workflowJson.workflow.nodeValues);
+        const currentRun = runs.find((entry) => entry.id === runningRun.id);
+        if (currentRun?.status === "running") {
+          syncRunNodeStates(currentRun);
+        } else if (currentRun) {
+          setWorkflowRunning(false);
+          setRunningNodeIds(new Set());
+          setPendingNodeIds(new Set());
+          toast({ description: currentRun.status === "success" ? "Background workflow run completed" : "Background workflow run failed. Check history for details." });
+        }
+      } catch (error) {
+        if (!stopped) toast({ description: error instanceof Error ? error.message : "Failed to refresh run status" });
+      }
+    };
+
+    void refreshRun();
+    const interval = window.setInterval(refreshRun, 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [historyEntries, setNodeValues, setPendingNodeIds, setRunningNodeIds, workflowId, workflowLoaded]);
 
   useEffect(() => {
     if (!workflowLoaded) return;

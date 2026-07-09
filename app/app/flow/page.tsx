@@ -15,7 +15,7 @@ import {
   Trash2,
   FileOutput,
 } from "lucide-react";
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { toast, Toaster } from "@/lib/toast";
 import { Sidebar } from "@/app/workflows/[workflow_id]/canvas/_components/sidebar";
@@ -86,6 +86,22 @@ function downloadJson(filename: string, data: unknown) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function WorkflowStatusBadge({ status, compact = false }: { status: WorkflowListItem["status"]; compact?: boolean }) {
+  const label = status === "RUNNING" ? "Running" : status === "READY" ? "Workflow completed" : "Draft";
+  const classes = status === "RUNNING"
+    ? "border-amber-200 bg-amber-50 text-amber-700"
+    : status === "READY"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : "border-gray-200 bg-gray-50 text-gray-600";
+
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 ${compact ? "py-0.5 text-[10px]" : "py-1 text-[11px]"} font-medium ${classes}`}>
+      {status === "RUNNING" ? <Loader2 className="h-3 w-3 animate-spin" /> : <span className={`h-1.5 w-1.5 rounded-full ${status === "READY" ? "bg-emerald-500" : "bg-gray-400"}`} />}
+      {label}
+    </span>
+  );
 }
 
 function WorkflowPreview({ large = false, coverUrl = "" }: { large?: boolean; coverUrl?: string }) {
@@ -170,11 +186,9 @@ function WorkflowCard({ workflow, onRename, onDuplicate, onDelete, onExport, onC
         >
           <ImagePlus className="h-4 w-4" />
         </button>
-        {workflow.status === "RUNNING" ? (
-          <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200">
-            <Loader2 className="h-3 w-3 animate-spin" /> Running
-          </span>
-        ) : null}
+        <span className="absolute bottom-2 right-2">
+          <WorkflowStatusBadge status={workflow.status} />
+        </span>
       </div>
 
       <div className="absolute right-2 top-2 z-50">
@@ -268,19 +282,19 @@ export default function FlowPage() {
   const [duplicating, setDuplicating] = useState(false);
   const navOverlayRef = useRef<HTMLDivElement>(null);
 
-  const loadWorkflows = async () => {
-    setLoading(true);
+  const loadWorkflows = useCallback(async ({ background = false }: { background?: boolean } = {}) => {
+    if (!background) setLoading(true);
     try {
       const response = await fetch("/api/workflows", { cache: "no-store" });
       const json = await readJsonResponse<{ workflows?: WorkflowListItem[]; error?: string }>(response);
       if (!response.ok) throw new Error(json.error ?? "Failed to load workflows");
       setWorkflows(json.workflows ?? []);
     } catch (error) {
-      toast({ description: error instanceof Error ? error.message : "Failed to load workflows" });
+      if (!background) toast({ description: error instanceof Error ? error.message : "Failed to load workflows" });
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const img = new Image();
@@ -296,7 +310,15 @@ export default function FlowPage() {
       void loadWorkflows();
     });
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [loadWorkflows]);
+
+  useEffect(() => {
+    if (!workflows.some((workflow) => workflow.status === "RUNNING")) return;
+    const interval = window.setInterval(() => {
+      void loadWorkflows({ background: true });
+    }, 2500);
+    return () => window.clearInterval(interval);
+  }, [loadWorkflows, workflows]);
 
   useEffect(() => {
     if (!deleteTarget) return;

@@ -6,7 +6,7 @@ import { getCurrentUser } from "@/lib/current-user";
 
 const createRunSchema = z.object({
   scope: z.enum(["full", "partial", "single"]),
-  status: z.enum(["success", "failed", "partial"]),
+  status: z.enum(["running", "success", "failed", "partial"]),
   durationMs: z.number().int().min(0),
   nodeDetails: z.array(z.unknown()),
   timestamp: z.number().int().optional(),
@@ -20,8 +20,8 @@ function toDbScope(scope: "full" | "partial" | "single") {
   return scope.toUpperCase() as "FULL" | "PARTIAL" | "SINGLE";
 }
 
-function toDbStatus(status: "success" | "failed" | "partial") {
-  return status.toUpperCase() as "SUCCESS" | "FAILED" | "PARTIAL";
+function toDbStatus(status: "running" | "success" | "failed" | "partial") {
+  return status.toUpperCase() as "RUNNING" | "SUCCESS" | "FAILED" | "PARTIAL";
 }
 
 async function findWorkflowForOwner(workflowId: string, ownerId: string) {
@@ -92,7 +92,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ wor
 
   await prisma.workflow.update({
     where: { id: workflow.id },
-    data: { status: parsed.data.status === "failed" ? "DRAFT" : "READY" },
+    data: { status: parsed.data.status === "running" ? "RUNNING" : parsed.data.status === "failed" ? "DRAFT" : "READY" },
   });
 
   return NextResponse.json({ run: fromDbRun(run) }, { status: 201 });

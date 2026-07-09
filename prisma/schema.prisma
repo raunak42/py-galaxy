@@ -15,6 +15,7 @@ enum WorkflowStatus {
 }
 
 enum WorkflowRunStatus {
+  RUNNING
   SUCCESS
   FAILED
   PARTIAL

@@ -23,7 +23,7 @@ export function CropImageNode({ id, data }: { id: string; data?: Record<string, 
   const [localRunning, setLocalRunning] = useState(false);
   const [runError, setRunError] = useState("");
   const runTokenRef = useRef(0);
-  const { runningNodeIds, pendingNodeIds, addHistoryEntry } = useWorkflowRunContext();
+  const { runningNodeIds, pendingNodeIds, addHistoryEntry, runSelectedNodes } = useWorkflowRunContext();
   const { values, setNodeHandleValue } = useNodeValueContext();
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const connectedInput = useConnectedInputValue(id, "input-image");
@@ -114,7 +114,7 @@ export function CropImageNode({ id, data }: { id: string; data?: Record<string, 
         menuOpen={menuOpen}
         menuButtonRef={menuButtonRef}
         onMenuOpen={() => setMenuOpen((open) => !open)}
-        onRun={runCrop}
+        onRun={() => { void runSelectedNodes([id]); }}
         running={isRunning}
         pending={isPending}
         runState={localRunning ? "running" : runningNodeIds.has(id) ? "workflow-running" : isPending ? "pending" : "idle"}

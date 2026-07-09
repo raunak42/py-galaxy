@@ -55,7 +55,7 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
   }, [recordSnapshot]);
   const runTokenRef = useRef(0);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
-  const { runningNodeIds, pendingNodeIds, addHistoryEntry } = useWorkflowRunContext();
+  const { runningNodeIds, pendingNodeIds, addHistoryEntry, runSelectedNodes } = useWorkflowRunContext();
   const connectedPrompt = useConnectedInputValue(nodeId, "prompt");
   const connectedSystemPrompt = useConnectedInputValue(nodeId, "system-prompt");
   const connectedImage = useConnectedInputValues(nodeId, "image");
@@ -166,7 +166,7 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
           <button className="nodrag rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40">
             <RotateCcw size={14} strokeWidth={2} className="h-3.5 w-3.5" />
           </button>
-          <MagicaNodeRunButton state={running ? "running" : runningNodeIds.has(nodeId) ? "workflow-running" : isNodePending ? "pending" : "idle"} onRun={runGemini} onCancel={cancelGeminiRun} />
+          <MagicaNodeRunButton state={running ? "running" : runningNodeIds.has(nodeId) ? "workflow-running" : isNodePending ? "pending" : "idle"} onRun={() => { void runSelectedNodes([nodeId]); }} onCancel={cancelGeminiRun} />
           <button
             ref={menuButtonRef}
             type="button"
