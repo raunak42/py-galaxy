@@ -21,11 +21,10 @@ const geminiPayloadSchema = z.object({
 export type GeminiTaskPayload = z.infer<typeof geminiPayloadSchema>;
 
 function resolveGeminiModel(label: string) {
-  // The UI label is Gemini 3.1 Pro. Google AI Studio model availability/quota
-  // varies a lot by project, so keep the UI label but use an overridable runtime
-  // model. Gemini 3 Flash currently works with the available project quota.
+  // The UI label can differ from the runtime model. Keep this overridable via
+  // Trigger.dev env, but default 3.1 labels to the cheaper/lighter runtime model.
   if (process.env.GEMINI_MODEL) return process.env.GEMINI_MODEL;
-  if (label.toLowerCase().includes("3.1")) return "gemini-3-flash-preview";
+  if (label.toLowerCase().includes("3.1")) return "gemini-3.1-flash-lite";
   return label;
 }
 

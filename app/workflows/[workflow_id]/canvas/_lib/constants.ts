@@ -9,7 +9,7 @@ export const SIDEBAR_EXPANDED_WIDTH = 296;
 
 export const PERMANENT_NODE_IDS = new Set(["request-inputs", "response"]);
 
-export const GEMINI_MODEL_NAME = process.env.NEXT_PUBLIC_GEMINI_MODEL ?? "gemini-3-flash-preview";
+export const GEMINI_MODEL_NAME = process.env.NEXT_PUBLIC_GEMINI_MODEL ?? "gemini-3.1-flash-lite";
 
 // ---- Handle Type System (colors match reference site exactly) ----
 export const HANDLE_COLORS: Record<string, string> = {
