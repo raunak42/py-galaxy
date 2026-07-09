@@ -401,7 +401,7 @@ export function TopLeftCanvasTitle({
           </button>
         )}
         <div className="inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white/85 px-2 py-1.5 shadow-md backdrop-blur">
-          <HoverTooltip text="Back to Workflow" side="bottom" triggerClassName="inline-flex">
+          <HoverTooltip text="Back to Workflow" side="bottom" triggerClassName="inline-flex" scaleWithZoom={false}>
             <a
               className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-800 hover:bg-gray-50"
               aria-label="Back to Workflow"
