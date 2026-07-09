@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { RotateCcw, Coins, File, Loader2 } from "lucide-react";
 import { IconUpload } from "@tabler/icons-react";
+import { CROP_NODE_TIMEOUT_MS, fetchWithTimeout } from "@/lib/fetch-timeout";
 import { toast } from "@/lib/toast";
 import { displayConnectedValue, isImageUrl } from "../_lib/utils";
 import { useConnectedInputValue, useNodeValueContext, useWorkflowEditContext, useWorkflowRunContext } from "../_lib/contexts";
@@ -62,11 +63,11 @@ export function CropImageNode({ id, data }: { id: string; data?: Record<string, 
     setLocalRunning(true);
     setRunError("");
     try {
-      const res = await fetch("/api/tasks/crop-image", {
+      const res = await fetchWithTimeout("/api/tasks/crop-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cropInputs),
-      });
+      }, CROP_NODE_TIMEOUT_MS, "Crop Image");
       const json = await res.json() as { output?: { outputImageUrl?: string }; error?: string; details?: { message?: string } | unknown };
       if (!res.ok) {
         const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;

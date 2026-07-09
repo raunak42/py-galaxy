@@ -57,7 +57,7 @@ export function toast(params: CreateToastParams | string) {
     typeof params === "string" ? { message: params } : params;
   const id = genId();
   const message = p.message || p.description || "";
-  const duration = p.duration ?? 3000;
+  const duration = p.duration ?? 0;
 
   let dismissTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -99,17 +99,25 @@ export function useToast() {
 }
 
 export function Toaster() {
-  const { toasts: items } = useToast();
+  const { toasts: items, dismiss } = useToast();
 
   return (
     <div className="fixed inset-x-0 bottom-20 z-[10050] flex flex-col items-center gap-2 px-4 pointer-events-none">
       {items.map((item) => (
         <div
           key={item.id}
-          className="animate-fade-in w-fit whitespace-pre-line rounded-lg border border-gray-200 bg-white px-4 py-2 text-center text-sm text-[#3d3d41] shadow-xl pointer-events-auto"
+          className="animate-fade-in flex w-fit items-start gap-3 whitespace-pre-line rounded-xl border border-indigo-200 bg-white px-4 py-3 text-left text-sm text-[#2f2f33] shadow-2xl ring-2 ring-indigo-100/80 pointer-events-auto"
           style={{ maxWidth: "min(560px, calc(100vw - 32px))" }}
         >
-          {item.message}
+          <div className="min-w-0 flex-1">{item.message}</div>
+          <button
+            type="button"
+            onClick={() => dismiss(item.id)}
+            className="-mr-1 -mt-1 inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-gray-500 transition hover:bg-gray-100 hover:text-gray-900"
+            aria-label="Dismiss notification"
+          >
+            ×
+          </button>
         </div>
       ))}
     </div>

@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import { RotateCcw, MoreHorizontal, Info, Coins, ChevronDown } from "lucide-react";
+import { fetchWithTimeout, GEMINI_NODE_TIMEOUT_MS } from "@/lib/fetch-timeout";
 import { toast } from "@/lib/toast";
 import { displayConnectedValue, valueToStringArray } from "../_lib/utils";
 import { useConnectedInputValue, useConnectedInputValues, useNodeValueContext, useWorkflowEditContext, useWorkflowRunContext } from "../_lib/contexts";
@@ -106,11 +107,11 @@ export function GeminiPreviewNode({ id: nodeId, data }: { id: string; data?: Rec
       geminiInputs.responseMimeType = "application/json";
     }
     try {
-      const res = await fetch("/api/tasks/gemini", {
+      const res = await fetchWithTimeout("/api/tasks/gemini", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(geminiInputs),
-      });
+      }, GEMINI_NODE_TIMEOUT_MS, GEMINI_MODEL_NAME);
       const json = await res.json() as { output?: { response?: string }; error?: string; details?: { message?: string } | unknown };
       if (!res.ok) {
         const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;

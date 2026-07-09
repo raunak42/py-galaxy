@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { Edge, Node } from "@xyflow/react";
+import { CROP_NODE_TIMEOUT_MS, fetchWithTimeout, GEMINI_NODE_TIMEOUT_MS } from "@/lib/fetch-timeout";
 import { toast } from "@/lib/toast";
 import { initialNodes } from "../_lib/initial-workflow";
 import { displayConnectedValue, nodeHistoryLabel, valueToStringArray } from "../_lib/utils";
@@ -277,11 +278,11 @@ export function useWorkflowRunner({
         const audioUrls = [...readConnectedValues(node.id, "audio"), ...valueToStringArray(readManual(node.id, "audio"))];
         const fileUrls = [...readConnectedValues(node.id, "file"), ...valueToStringArray(readManual(node.id, "file"))];
         const inputs = { prompt, systemPrompt: systemPrompt || undefined, imageUrls, videoUrls, audioUrls, fileUrls, model: "gemini-3.1-pro" };
-        const res = await fetch("/api/tasks/gemini", {
+        const res = await fetchWithTimeout("/api/tasks/gemini", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(inputs),
-        });
+        }, GEMINI_NODE_TIMEOUT_MS, `Gemini node ${nodeHistoryLabel(node)}`);
         const json = await res.json() as { output?: { response?: string }; error?: string; details?: { message?: string } | unknown };
         if (!res.ok) {
           const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
@@ -296,11 +297,11 @@ export function useWorkflowRunner({
         width: Number(readEffective(node.id, "width", node.data?.width || 100)),
         height: Number(readEffective(node.id, "height", node.data?.height || 100)),
       };
-      const res = await fetch("/api/tasks/crop-image", {
+      const res = await fetchWithTimeout("/api/tasks/crop-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(inputs),
-      });
+      }, CROP_NODE_TIMEOUT_MS, `Crop node ${nodeHistoryLabel(node)}`);
       const json = await res.json() as { output?: { outputImageUrl?: string }; error?: string; details?: { message?: string } | unknown };
       if (!res.ok) {
         const detailMessage = typeof json.details === "object" && json.details && "message" in json.details && typeof json.details.message === "string" ? json.details.message : undefined;
