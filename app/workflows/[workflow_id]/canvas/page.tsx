@@ -621,7 +621,8 @@ export default function WorkflowCanvasPage() {
           setWorkflowRunning(false);
           setRunningNodeIds(new Set());
           setPendingNodeIds(new Set());
-          toast({ description: currentRun.status === "success" ? "Background workflow run completed" : "Background workflow run failed. Check history for details." });
+          const failedDetail = currentRun.nodeDetails.find((detail) => detail.status === "failed" && detail.error);
+          toast({ description: currentRun.status === "success" ? "Background workflow run completed" : failedDetail?.error ? `Background workflow run failed: ${failedDetail.error}` : "Background workflow run failed. Check history for details." });
         }
       } catch (error) {
         if (!stopped) toast({ description: error instanceof Error ? error.message : "Failed to refresh run status" });

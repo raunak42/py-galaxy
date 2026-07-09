@@ -50,7 +50,9 @@ function isRetryableGeminiDemandError(error: unknown) {
 }
 
 async function retryGeminiRequest<T>(operation: () => Promise<T>) {
-  const delays = [5, 10, 20];
+  // Keep demo UX predictable: retry high-demand Gemini failures with a short,
+  // fixed delay instead of exponential backoff. This avoids multi-minute waits.
+  const delays = [3, 3];
   let lastError: unknown;
   for (let attempt = 0; attempt <= delays.length; attempt += 1) {
     try {
@@ -89,6 +91,11 @@ async function urlToInlinePart(url: string, fallbackMime: string): Promise<Part>
 
 export const runGeminiTask = task({
   id: "py-gemini-3-1-pro",
+  retry: {
+    // We already retry transient Gemini demand errors inside the task with
+    // fixed delays. Avoid a second task-level retry that can double runtime.
+    maxAttempts: 1,
+  },
   run: async (rawPayload: GeminiTaskPayload) => {
     const payload = geminiPayloadSchema.parse(rawPayload);
     const apiKey = process.env.GOOGLE_AI_API_KEY ?? process.env.GEMINI_API_KEY;
