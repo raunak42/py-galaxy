@@ -487,11 +487,22 @@ export function useWorkflowRunner({
         }).catch(() => undefined);
       }
     }
+    const clearedValues = { ...nodeValues };
+    for (const node of nodes) {
+      if (node.type === "geminiPreview" || node.type === "cropImage") clearedValues[node.id] = {};
+    }
+    setNodeValues(clearedValues);
+    void fetch(`/api/workflows/${workflowId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nodeValues: clearedValues }),
+      keepalive: true,
+    }).catch(() => undefined);
     setRunningNodeIds(new Set());
     setPendingNodeIds(new Set());
     setWorkflowRunning(false);
-    toast({ description: "Workflow run canceled" });
-  }, [historyEntries, setHistoryEntries, setPendingNodeIds, setRunningNodeIds, setWorkflowRunning, workflowId]);
+    toast({ description: "Workflow run canceled. Starting again will create a new run from the beginning." });
+  }, [historyEntries, nodeValues, nodes, setHistoryEntries, setNodeValues, setPendingNodeIds, setRunningNodeIds, setWorkflowRunning, workflowId]);
   const runWorkflow = useCallback(async () => {
     await runExecutableScope(null, "full");
   }, [runExecutableScope]);
